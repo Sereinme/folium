@@ -191,17 +191,27 @@ impl PdfReader {
             self.rebuild_render_queue();
         }
 
-        // Drain queue into local vec to avoid borrow conflicts
+        // Drain queue into local vec, respecting inflight cap
         let batch: Vec<_> = self.render_queue.drain(..).collect();
         let mut submitted = false;
+        let mut remaining = Vec::new();
         if let Some(document) = &mut self.document {
-            for (idx, scale) in batch {
+            for item in batch {
+                if !document.can_render() {
+                    remaining.push(item);
+                    continue;
+                }
+                let (idx, scale) = item;
                 if !document.is_cached(idx, scale) {
                     document.request_render(idx, scale);
                     submitted = true;
                 }
             }
+        } else {
+            remaining = batch;
         }
+        // Put unsubmitted items back
+        self.render_queue.extend(remaining);
         changed || submitted
     }
 }
@@ -215,12 +225,8 @@ impl Render for PdfReader {
                 if !d.initialized {
                     return true;
                 }
-                let cur = self.current_page;
-                (0..=PRERENDER_RANGE).flat_map(|off| [cur.wrapping_sub(off), cur + off])
-                    .any(|i| {
-                        i < d.page_count && (!d.is_cached(i, ScaleType::Full)
-                            || !d.is_cached(i, ScaleType::Thumb))
-                    })
+                // Keep loop alive while renders are in-flight or queue has pending items
+                d.inflight > 0 || !self.render_queue.is_empty()
             })
         {
             cx.notify();

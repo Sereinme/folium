@@ -19,6 +19,7 @@ pub struct PdfDocument {
     pub thumbnails: Vec<Option<PdfPageImage>>,
     pub preview: Option<PdfPageImage>,
     pub initialized: bool,
+    pub inflight: usize,
     handle: RenderHandle,
 }
 
@@ -34,6 +35,7 @@ impl PdfDocument {
             thumbnails: Vec::new(),
             preview: None,
             initialized: false,
+            inflight: 0,
             handle,
         })
     }
@@ -59,6 +61,7 @@ impl PdfDocument {
                     result,
                     ..
                 } => {
+                    self.inflight = self.inflight.saturating_sub(1);
                     if page_index >= self.page_count {
                         continue;
                     }
@@ -89,6 +92,10 @@ impl PdfDocument {
         changed
     }
 
+    pub fn can_render(&self) -> bool {
+        self.inflight < 10
+    }
+
     pub fn request_render(&mut self, page_index: usize, scale: ScaleType) {
         if !self.initialized || page_index >= self.page_count {
             return;
@@ -96,6 +103,7 @@ impl PdfDocument {
         if self.is_cached(page_index, scale) {
             return;
         }
+        self.inflight += 1;
         self.handle.submit(page_index, scale);
     }
 

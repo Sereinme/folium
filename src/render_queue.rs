@@ -10,7 +10,7 @@ use crate::types::{OutlineItem, ScaleType};
 
 // ── LRU DisplayList cache ─────────────────────────────────────────────
 
-const DL_CACHE_MAX: usize = 30;
+const DL_CACHE_MAX: usize = 20;
 
 struct DlCache(Vec<(usize, DisplayList)>);
 
