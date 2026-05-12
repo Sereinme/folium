@@ -16,16 +16,12 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-/// Full-scale pages to render outward from current page (both directions)
 const RENDER_FULL_RADIUS: usize = 30;
-/// Thumbnail buffer radius
 const RENDER_THUMB_RADIUS: usize = 80;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
     pub current_page: usize,
-    pub window_start: usize,     // fixed window anchor — changes only on select_page
-    pub wheel_accumulator: f32,  // scroll delta within current window
     pub sidebar_tab: SidebarTab,
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
@@ -39,8 +35,6 @@ impl PdfReader {
         let mut this = Self {
             document: None,
             current_page: 0,
-            window_start: 0,
-            wheel_accumulator: 0.0,
             sidebar_tab: SidebarTab::Thumbnails,
             status: None,
             app_menu_bar,
@@ -59,10 +53,9 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
-                self.window_start = 0;
-                self.wheel_accumulator = 0.0;
                 self.status = None;
                 self.outline_collapsed.clear();
+                self.render_queue.clear();
                 self.document = Some(document);
             }
             Err(error) => {
@@ -96,39 +89,23 @@ impl PdfReader {
     }
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
-        // Window centered on selected page with back buffer for scroll
-        let back = 10;
-        self.window_start = page_index.saturating_sub(back);
         self.current_page = page_index;
-        self.wheel_accumulator = (page_index - self.window_start) as f32 * 1220.0;
         self.rebuild_render_queue();
         cx.notify();
     }
 
     fn previous_page(&mut self, cx: &mut Context<Self>) {
-        if self.current_page > self.window_start {
-            // Still within window — just move current_page
+        if self.current_page > 0 {
             self.current_page -= 1;
-            self.wheel_accumulator = self.wheel_accumulator - 1220.0;
-            if self.wheel_accumulator < 0.0 {
-                self.wheel_accumulator = 0.0;
-            }
-        } else if self.current_page > 0 {
-            // At window edge — rebuild window centered on new page
-            let new = self.current_page - 1;
-            self.window_start = new.saturating_sub(10);
-            self.current_page = new;
-            self.wheel_accumulator = (self.current_page - self.window_start) as f32 * 1220.0;
+            self.rebuild_render_queue();
+            cx.notify();
         }
-        self.rebuild_render_queue();
-        cx.notify();
     }
 
     fn next_page(&mut self, cx: &mut Context<Self>) {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
-                self.wheel_accumulator += 1220.0;
                 self.rebuild_render_queue();
                 cx.notify();
             }
@@ -152,7 +129,6 @@ impl PdfReader {
         let cur = self.current_page;
         let max = document.page_count;
 
-        // Ripple outward from current page for full scale
         for radius in 0..=RENDER_FULL_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
@@ -166,7 +142,6 @@ impl PdfReader {
             }
         }
 
-        // Wider thumbnail-only buffer
         for radius in (RENDER_FULL_RADIUS + 1)..=RENDER_THUMB_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
@@ -178,7 +153,6 @@ impl PdfReader {
     }
 
     fn poll_and_submit(&mut self) -> bool {
-        // MUST poll first — processes both Init and Done messages.
         let changed = self
             .document
             .as_mut()
@@ -202,7 +176,6 @@ impl PdfReader {
             self.rebuild_render_queue();
         }
 
-        // Drain queue into local vec, respecting inflight cap
         let batch: Vec<_> = self.render_queue.drain(..).collect();
         let mut submitted = false;
         let mut remaining = Vec::new();
@@ -221,7 +194,6 @@ impl PdfReader {
         } else {
             remaining = batch;
         }
-        // Put unsubmitted items back
         self.render_queue.extend(remaining);
         changed || submitted
     }
@@ -233,10 +205,7 @@ impl Render for PdfReader {
 
         if needs_refresh
             || self.document.as_ref().is_some_and(|d| {
-                if !d.initialized {
-                    return true;
-                }
-                // Keep loop alive while renders are in-flight or queue has pending items
+                if !d.initialized { return true; }
                 d.inflight > 0 || !self.render_queue.is_empty()
             })
         {
