@@ -31,7 +31,7 @@ fn main() {
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some(SharedString::from("gpdf")),
+                title: Some(SharedString::from("Folium")),
                 appears_transparent: false,
                 ..Default::default()
             }),

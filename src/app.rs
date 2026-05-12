@@ -259,7 +259,7 @@ impl Render for PdfReader {
             .as_ref()
             .and_then(|document| document.path.file_name())
             .and_then(|name| name.to_str())
-            .unwrap_or("gpdf");
+            .unwrap_or("Folium");
         let page_label = self
             .document
             .as_ref()
