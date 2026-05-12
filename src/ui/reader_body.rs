@@ -62,7 +62,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
             let px_delta = event.delta.pixel_delta(px(30.0));
             let delta: f32 = f32::from(px_delta.y);
-            this.wheel_accumulator += delta;
+            this.wheel_accumulator -= delta;
 
             let new_page = (this.wheel_accumulator / step_cap).round() as usize;
             if new_page < max_page && new_page != this.current_page {
