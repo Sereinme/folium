@@ -24,7 +24,8 @@ const RENDER_THUMB_RADIUS: usize = 80;
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
     pub current_page: usize,
-    pub wheel_accumulator: f32,  // accumulated wheel delta for current_page estimation
+    pub window_start: usize,     // fixed window anchor — changes only on select_page
+    pub wheel_accumulator: f32,  // scroll delta within current window
     pub sidebar_tab: SidebarTab,
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
@@ -38,6 +39,7 @@ impl PdfReader {
         let mut this = Self {
             document: None,
             current_page: 0,
+            window_start: 0,
             wheel_accumulator: 0.0,
             sidebar_tab: SidebarTab::Thumbnails,
             status: None,
@@ -57,6 +59,7 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
+                self.window_start = 0;
                 self.wheel_accumulator = 0.0;
                 self.status = None;
                 self.outline_collapsed.clear();
@@ -93,6 +96,7 @@ impl PdfReader {
     }
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
+        self.window_start = page_index;
         self.current_page = page_index;
         self.wheel_accumulator = 0.0;
         self.rebuild_render_queue();
