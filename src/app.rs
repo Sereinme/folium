@@ -16,7 +16,8 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-const RENDER_RANGE: usize = 10;
+const RENDER_RANGE: usize = 6;        // thumbnail neighbours
+const PRERENDER_RANGE: usize = 2;     // full-scale pre-render
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
@@ -127,6 +128,7 @@ impl PdfReader {
         let cur = self.current_page;
         let max = document.page_count;
 
+        // ── Current page: progressive quality ──
         if !document.is_cached(cur, ScaleType::Thumb) {
             self.render_queue.push_back((cur, ScaleType::Thumb));
         }
@@ -135,6 +137,7 @@ impl PdfReader {
             self.render_queue.push_back((cur, ScaleType::Full));
         }
 
+        // ── Neighbour thumbnails (sidebar visible range) ──
         for offset in 1..=RENDER_RANGE {
             let prev = cur.saturating_sub(offset);
             if prev < max && prev != cur && !document.is_cached(prev, ScaleType::Thumb) {
@@ -143,6 +146,21 @@ impl PdfReader {
             let next = cur + offset;
             if next < max && !document.is_cached(next, ScaleType::Thumb) {
                 self.render_queue.push_back((next, ScaleType::Thumb));
+            }
+        }
+
+        // ── Pre-render adjacent pages full scale (instant flip) ──
+        for off in 1..=PRERENDER_RANGE {
+            for &i in &[cur.wrapping_sub(off), cur + off] {
+                if i < max {
+                    if !document.is_cached(i, ScaleType::Thumb) {
+                        self.render_queue.push_back((i, ScaleType::Thumb));
+                    }
+                    self.render_queue.push_back((i, ScaleType::Preview));
+                    if !document.is_cached(i, ScaleType::Full) {
+                        self.render_queue.push_back((i, ScaleType::Full));
+                    }
+                }
             }
         }
     }
@@ -163,16 +181,10 @@ impl PdfReader {
         let needs_rebuild = self.render_queue.is_empty()
             && self.document.as_ref().is_some_and(|d| {
                 let cur = self.current_page;
-                let start = cur.saturating_sub(RENDER_RANGE);
-                let end = (cur + RENDER_RANGE + 1).min(d.page_count);
-                (start..end).any(|i| {
-                    let scale = if i == cur {
-                        ScaleType::Full
-                    } else {
-                        ScaleType::Thumb
-                    };
-                    !d.is_cached(i, scale)
-                })
+                // Check if all pre-render targets are cached
+                (0..=PRERENDER_RANGE).flat_map(|off| [cur.wrapping_sub(off), cur + off])
+                    .any(|i| i < d.page_count && (!d.is_cached(i, ScaleType::Full)
+                        || !d.is_cached(i, ScaleType::Thumb)))
             });
 
         if needs_rebuild {
@@ -204,16 +216,11 @@ impl Render for PdfReader {
                     return true;
                 }
                 let cur = self.current_page;
-                let start = cur.saturating_sub(RENDER_RANGE);
-                let end = (cur + RENDER_RANGE + 1).min(d.page_count);
-                (start..end).any(|i| {
-                    let scale = if i == cur {
-                        ScaleType::Full
-                    } else {
-                        ScaleType::Thumb
-                    };
-                    !d.is_cached(i, scale)
-                })
+                (0..=PRERENDER_RANGE).flat_map(|off| [cur.wrapping_sub(off), cur + off])
+                    .any(|i| {
+                        i < d.page_count && (!d.is_cached(i, ScaleType::Full)
+                            || !d.is_cached(i, ScaleType::Thumb))
+                    })
             })
         {
             cx.notify();

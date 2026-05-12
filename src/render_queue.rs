@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -8,6 +7,41 @@ use mupdf::{Colorspace, DisplayList, Document, Matrix};
 
 use crate::pdf::outline::parse_outline;
 use crate::types::{OutlineItem, ScaleType};
+
+// ── LRU DisplayList cache ─────────────────────────────────────────────
+
+const DL_CACHE_MAX: usize = 30;
+
+struct DlCache(Vec<(usize, DisplayList)>);
+
+impl DlCache {
+    fn new() -> Self {
+        Self(Vec::with_capacity(DL_CACHE_MAX))
+    }
+
+    fn get_or_create(
+        &mut self,
+        page_index: usize,
+        create: impl FnOnce() -> DisplayList,
+    ) -> &DisplayList {
+        // Promote existing to back (most recently used)
+        if let Some(pos) = self.0.iter().position(|(idx, _)| *idx == page_index) {
+            let entry = self.0.remove(pos);
+            self.0.push(entry);
+            return &self.0.last().unwrap().1;
+        }
+
+        // Evict oldest if full
+        if self.0.len() >= DL_CACHE_MAX {
+            self.0.remove(0);
+        }
+
+        self.0.push((page_index, create()));
+        &self.0.last().unwrap().1
+    }
+}
+
+// ── Channels ───────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 enum Cmd {
@@ -33,6 +67,8 @@ pub enum ToMain {
     },
 }
 
+// ── RenderHandle ───────────────────────────────────────────────────────
+
 pub struct RenderHandle {
     cmd_tx: Sender<Cmd>,
     result_rx: Receiver<ToMain>,
@@ -46,9 +82,7 @@ impl RenderHandle {
 
         thread::Builder::new()
             .name("pdf-render".into())
-            .spawn(move || {
-                Self::render_thread(path, cmd_rx, result_tx);
-            })
+            .spawn(move || Self::render_thread(path, cmd_rx, result_tx))
             .map_err(|e| anyhow!("failed to spawn render thread: {e}"))?;
 
         Ok(Self {
@@ -69,7 +103,7 @@ impl RenderHandle {
 
         let doc = match Document::from_bytes(&data, "pdf") {
             Ok(d) => d,
-            Err(_e) => {
+            Err(_) => {
                 let _ = result_tx.send(ToMain::Init { page_count: 0 });
                 return;
             }
@@ -77,18 +111,15 @@ impl RenderHandle {
         drop(data);
 
         let page_count = doc.page_count().unwrap_or(0) as usize;
-
-        // Send Init ASAP — UI can show layout immediately
         if result_tx.send(ToMain::Init { page_count }).is_err() {
             return;
         }
 
-        // Parse outline in background (can be slow for complex PDFs)
+        // Deferred outline (background, non-blocking)
         let outline = parse_outline(&doc);
         let _ = result_tx.send(ToMain::Outline(outline));
 
-        // Per-page DisplayList cache: parse content ONCE, render at any scale
-        let mut dls: HashMap<usize, DisplayList> = HashMap::new();
+        let mut dls = DlCache::new();
 
         for cmd in cmd_rx {
             match cmd {
@@ -112,26 +143,30 @@ impl RenderHandle {
 
     fn render_page(
         doc: &Document,
-        dls: &mut HashMap<usize, DisplayList>,
+        dls: &mut DlCache,
         page_index: usize,
         scale_type: ScaleType,
     ) -> Result<(Vec<u8>, u32, u32)> {
-        let dl = dls.entry(page_index).or_insert_with(|| {
+        let dl = dls.get_or_create(page_index, || {
             doc.load_page(page_index as i32)
                 .ok()
-                .and_then(|p| p.to_display_list(true).ok())
-                .unwrap()
+                .and_then(|p| p.to_display_list(false).ok())
+                .expect("mupdf: failed to create DisplayList")
         });
 
         let scale = scale_type.scale_value();
         let ctm = Matrix::new_scale(scale, scale);
-        let cs = Colorspace::device_rgb();
         let pixmap = dl
-            .to_pixmap(&ctm, &cs, true)
-            .map_err(|e| anyhow!("mupdf dl.to_pixmap: {e}"))?;
+            .to_pixmap(&ctm, &Colorspace::device_rgb(), true)
+            .map_err(|e| anyhow!("mupdf to_pixmap: {e}"))?;
+
         let width = pixmap.width();
         let height = pixmap.height();
         let samples = pixmap.samples().to_vec();
+
+        // pixmap is dropped here; GPU-side memory was never allocated
+        drop(pixmap);
+
         Ok((samples, width, height))
     }
 
