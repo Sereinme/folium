@@ -1,5 +1,6 @@
 pub mod outline;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,14 +12,17 @@ use smallvec::SmallVec;
 use crate::render_queue::{RenderHandle, ToMain};
 use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 
+/// How many pages around the current page to keep Preview renders cached.
+const PREVIEW_CACHE_RADIUS: usize = 5;
+
 pub struct PdfDocument {
     pub path: PathBuf,
     pub page_count: usize,
     pub outline: Vec<OutlineItem>,
     pub pages: Vec<Option<PdfPageImage>>,
     pub thumbnails: Vec<Option<PdfPageImage>>,
-    pub preview: Option<PdfPageImage>,
-    pub page_dims: Vec<Option<(f32, f32)>>,  // (natural_w, natural_h) per page
+    pub previews: HashMap<usize, PdfPageImage>,
+    pub page_dims: Vec<Option<(f32, f32)>>,
     pub initialized: bool,
     pub inflight: usize,
     handle: RenderHandle,
@@ -34,7 +38,7 @@ impl PdfDocument {
             outline: Vec::new(),
             pages: Vec::new(),
             thumbnails: Vec::new(),
-            preview: None,
+            previews: HashMap::new(),
             page_dims: Vec::new(),
             initialized: false,
             inflight: 0,
@@ -70,7 +74,6 @@ impl PdfDocument {
                     }
                     match result {
                         Ok((samples, width, height)) => {
-                            // Record natural page dimensions on first render
                             if self.page_dims[page_index].is_none() {
                                 let s = scale.scale_value();
                                 self.page_dims[page_index] =
@@ -81,10 +84,9 @@ impl PdfDocument {
                             match scale {
                                 ScaleType::Full => {
                                     self.pages[page_index] = Some(image);
-                                    self.preview = None;
                                 }
                                 ScaleType::Preview => {
-                                    self.preview = Some(image);
+                                    self.previews.insert(page_index, image);
                                 }
                                 ScaleType::Thumb => {
                                     self.thumbnails[page_index] = Some(image);
@@ -119,7 +121,7 @@ impl PdfDocument {
         }
         match scale {
             ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref).is_some(),
-            ScaleType::Preview => false,
+            ScaleType::Preview => self.previews.contains_key(&page_index),
             ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref).is_some(),
         }
     }
@@ -130,9 +132,17 @@ impl PdfDocument {
         }
         match scale {
             ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref),
-            ScaleType::Preview => self.preview.as_ref(),
+            ScaleType::Preview => self.previews.get(&page_index),
             ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref),
         }
+    }
+
+    /// Evict previews that are too far from the current page.
+    pub fn evict_distant_previews(&mut self, current_page: usize) {
+        let cur = current_page as isize;
+        self.previews.retain(|&idx, _| {
+            (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS
+        });
     }
 
     /// Natural page dimensions (from any rendered scale), or a default A4 fallback

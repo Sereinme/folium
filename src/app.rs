@@ -105,7 +105,8 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        if let Some(doc) = &self.document {
+        if let Some(doc) = &mut self.document {
+            doc.evict_distant_previews(page_index);
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
@@ -148,7 +149,7 @@ impl PdfReader {
 
     /// Sync current_page from scroll_offset (called before UI build)
     pub fn sync_current_page(&mut self) {
-        let Some(doc) = &self.document else { return };
+        let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return; }
         let (nw, nh) = doc.page_dim(self.current_page.max(1) - 1);
         let a = if nw > 0.0 { nh / nw } else { 1.414 };
@@ -156,6 +157,7 @@ impl PdfReader {
         let new_page = (self.scroll_offset / step).round() as usize;
         if new_page < doc.page_count && new_page != self.current_page {
             self.current_page = new_page;
+            doc.evict_distant_previews(new_page);
             self.sidebar_scroll_handle.scroll_to_item(new_page);
         }
     }
@@ -180,7 +182,9 @@ impl PdfReader {
         for radius in 0..=RENDER_FULL_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
-                self.render_queue.push_back((i, ScaleType::Preview));
+                if !document.is_cached(i, ScaleType::Preview) {
+                    self.render_queue.push_back((i, ScaleType::Preview));
+                }
                 if !document.is_cached(i, ScaleType::Thumb) {
                     self.render_queue.push_back((i, ScaleType::Thumb));
                 }
