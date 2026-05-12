@@ -94,9 +94,17 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        // Estimate scroll target using average page height
-        let est_page_h = 860.0 * 1.4 + 12.0; // avg display_h + gap
-        self.scroll_offset = page_index as f32 * est_page_h;
+        // Use document page dims if available
+        if let Some(doc) = &self.document {
+            let (nw, nh) = doc.page_dim(page_index);
+            let aspect = if nw > 0.0 { nh / nw } else { 1.414 };
+            let page_w = 860.0_f32.min(nw.max(595.0));
+            let page_h = page_w * aspect;
+            let step = page_h + 16.0;
+            self.scroll_offset = page_index as f32 * step;
+        } else {
+            self.scroll_offset = page_index as f32 * 1216.0;
+        }
         self.rebuild_render_queue();
         cx.notify();
     }
