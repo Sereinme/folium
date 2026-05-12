@@ -1,5 +1,6 @@
 use gpui::{
-    div, img, px, AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled,
+    div, img, px, AnyElement, Context, ElementId, InteractiveElement, IntoElement, ParentElement,
+    Styled,
 };
 use gpui_component::button::ButtonVariants;
 
@@ -29,6 +30,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
     pdfr.scroll_offset = pdfr.scroll_offset.clamp(0.0, max_off);
 
     // Fixed viewport with overflow_hidden — inner content shifted by scroll_offset
+    let frame_stamp = pdfr.render_stamp;
     let mut frame = div()
         .flex_1()
         .h_full()
@@ -49,17 +51,20 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
     ));
 
     if !document.initialized {
-        return frame
+        return div()
+            .id(ElementId::named_usize("rp-stamp", frame_stamp))
             .child(
-                div()
-                    .w_full()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(styles::TEXT_SECONDARY)
-                    .text_sm()
-                    .child("Loading document…"),
+                frame.child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(styles::TEXT_SECONDARY)
+                        .text_sm()
+                        .child("Loading document…"),
+                ),
             )
             .into_any_element();
     }
@@ -110,7 +115,12 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         inner = inner.child(page);
     }
 
-    frame.child(inner).into_any_element()
+    // Stamped wrapper forces GPUI to re-paint even when element tree appears identical
+    let wrapper_id = ElementId::named_usize("rp-stamp", frame_stamp);
+    div()
+        .id(wrapper_id)
+        .child(frame.child(inner))
+        .into_any_element()
 }
 
 fn no_pdf_view(cx: &mut Context<PdfReader>) -> AnyElement {

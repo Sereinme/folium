@@ -29,6 +29,7 @@ pub struct PdfReader {
     pub scroll_offset: f32,                  // manual scroll: how far we've scrolled in pixels
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
     render_queue: VecDeque<(usize, ScaleType)>,
+    pub render_stamp: usize,                 // increment each render() to force GPUI repaint
 }
 
 impl PdfReader {
@@ -44,6 +45,7 @@ impl PdfReader {
             scroll_offset: 0.0,
             sidebar_scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
+            render_stamp: 0,
         };
 
         if let Some(path) = initial_path {
@@ -234,20 +236,17 @@ impl PdfReader {
 
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
-        let needs_refresh = self.poll_and_submit();
+        let changed = self.poll_and_submit();
 
-        // Keep rendering loop alive while there's any work to do
-        let keep_looping = self.document.as_ref().is_some_and(|d| {
+        // Force continuous frames while any page is being rendered
+        let needs_render = self.document.as_ref().is_some_and(|d| {
             if !d.initialized { return true; }
             d.inflight > 0
-                || (0..d.page_count.min(50)).any(|i| {
-                    !d.is_cached(i, ScaleType::Full)
-                        && !d.is_cached(i, ScaleType::Preview)
-                })
         });
 
-        if needs_refresh || keep_looping {
+        if changed || needs_render {
             cx.notify();
         }
 
