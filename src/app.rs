@@ -5,19 +5,17 @@ use gpui::{
     div, px, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
     Styled, Window,
 };
+use gpui::prelude::FluentBuilder;
 use gpui_component::{
     button::Button,
     menu::AppMenuBar,
     TitleBar,
 };
-use gpui::prelude::FluentBuilder;
 
 use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-const BATCH_SIZE: usize = 3;
-const QUEUE_REFILL_THRESHOLD: usize = 8;
 const RENDER_RANGE: usize = 10;
 
 pub struct PdfReader {
@@ -123,97 +121,74 @@ impl PdfReader {
     }
 
     fn rebuild_render_queue(&mut self) {
-        let Some(document) = &self.document else {
-            return;
-        };
+        let Some(document) = &self.document else { return };
+        if !document.initialized { return; }
+
         self.render_queue.clear();
-
         let cur = self.current_page;
+        let max = document.page_count;
 
-        // Current page full-scale (highest priority)
+        if !document.is_cached(cur, ScaleType::Thumb) {
+            self.render_queue.push_back((cur, ScaleType::Thumb));
+        }
         if !document.is_cached(cur, ScaleType::Full) {
             self.render_queue.push_back((cur, ScaleType::Full));
         }
 
-        // Thumbnails around current page (descending proximity)
-        let start = cur.saturating_sub(RENDER_RANGE);
-        let end = (cur + RENDER_RANGE + 1).min(document.page_count);
-
-        if cur + 1 < end {
-            self.render_queue
-                .push_back((cur + 1, ScaleType::Thumb));
-        }
-        if cur > 0 {
-            self.render_queue.push_back((cur - 1, ScaleType::Thumb));
-        }
-
-        for i in (start..end).rev() {
-            if i == cur || i == cur + 1 || i == cur.wrapping_sub(1) {
-                continue;
+        for offset in 1..=RENDER_RANGE {
+            let prev = cur.saturating_sub(offset);
+            if prev < max && prev != cur && !document.is_cached(prev, ScaleType::Thumb) {
+                self.render_queue.push_back((prev, ScaleType::Thumb));
             }
-            self.render_queue.push_back((i, ScaleType::Thumb));
+            let next = cur + offset;
+            if next < max && !document.is_cached(next, ScaleType::Thumb) {
+                self.render_queue.push_back((next, ScaleType::Thumb));
+            }
         }
     }
 
-    fn poll_and_submit(&mut self) {
-        let Some(document) = &mut self.document else {
-            return;
-        };
+    fn poll_and_submit(&mut self) -> bool {
+        let Some(document) = &mut self.document else { return false; };
 
-        // Drain completed renders
-        document.poll_render_results();
+        let changed = document.poll_render_results();
 
-        // Submit batch from queue
-        let mut submitted = 0;
-        while submitted < BATCH_SIZE {
-            let Some((idx, scale)) = self.render_queue.pop_front() else {
-                break;
-            };
+        if !document.initialized {
+            return changed || true;
+        }
+
+        let mut submitted = false;
+        while let Some((idx, scale)) = self.render_queue.pop_front() {
             if !document.is_cached(idx, scale) {
                 document.request_render(idx, scale);
-            }
-            submitted += 1;
-        }
-
-        // Refill if running low
-        if self.render_queue.len() < QUEUE_REFILL_THRESHOLD {
-            let cur = self.current_page;
-            let start = cur.saturating_sub(RENDER_RANGE);
-            let end = (cur + RENDER_RANGE + 1).min(document.page_count);
-
-            for i in start..end {
-                let scale = if i == cur {
-                    ScaleType::Full
-                } else {
-                    ScaleType::Thumb
-                };
-                if !document.is_cached(i, scale) {
-                    let entry = (i, scale);
-                    if !self.render_queue.contains(&entry) {
-                        self.render_queue.push_back(entry);
-                    }
-                }
+                submitted = true;
             }
         }
+        changed || submitted
     }
 }
 
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.poll_and_submit();
+        let needs_refresh = self.poll_and_submit();
 
-        let has_pending = !self.render_queue.is_empty()
+        if needs_refresh
             || self.document.as_ref().is_some_and(|d| {
-                let cur = d.page_count;
-                for i in 0..cur {
-                    if !d.is_cached(i, ScaleType::Thumb) {
-                        return true;
-                    }
+                if !d.initialized {
+                    return true;
                 }
-                false
-            });
-
-        if has_pending {
+                let cur = self.current_page;
+                let start = cur.saturating_sub(RENDER_RANGE);
+                let end = (cur + RENDER_RANGE + 1).min(d.page_count);
+                (start..end).any(|i| {
+                    let scale = if i == cur {
+                        ScaleType::Full
+                    } else {
+                        ScaleType::Thumb
+                    };
+                    !d.is_cached(i, scale)
+                })
+            })
+        {
             cx.notify();
         }
 
@@ -226,6 +201,7 @@ impl Render for PdfReader {
         let page_label = self
             .document
             .as_ref()
+            .filter(|d| d.initialized)
             .map(|document| format!("{} / {}", self.current_page + 1, document.page_count))
             .unwrap_or_else(|| "- / -".to_string());
 

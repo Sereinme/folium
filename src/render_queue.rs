@@ -1,5 +1,6 @@
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread::{self, JoinHandle};
+use std::thread;
 
 use anyhow::{anyhow, Result};
 use mupdf::{Colorspace, Document, Matrix};
@@ -10,7 +11,7 @@ use crate::types::{OutlineItem, ScaleType};
 #[derive(Debug)]
 enum Cmd {
     Render {
-        id: u64,
+        _id: u64,
         page_index: usize,
         scale: ScaleType,
     },
@@ -35,44 +36,31 @@ pub struct RenderHandle {
     cmd_tx: Sender<Cmd>,
     result_rx: Receiver<ToMain>,
     next_id: u64,
-    thread_handle: Option<JoinHandle<()>>,
 }
 
 impl RenderHandle {
-    pub fn start(pdf_data: Vec<u8>) -> Result<(Self, usize, Vec<OutlineItem>)> {
+    /// Spawns render thread and returns immediately (non-blocking).
+    /// Init message will arrive via poll().
+    pub fn start(path: PathBuf) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (result_tx, result_rx) = mpsc::channel::<ToMain>();
 
-        let handle = thread::Builder::new()
+        thread::Builder::new()
             .name("pdf-render".into())
             .spawn(move || {
-                Self::render_thread(pdf_data, cmd_rx, result_tx);
+                Self::render_thread(path, cmd_rx, result_tx);
             })
             .map_err(|e| anyhow!("failed to spawn render thread: {e}"))?;
 
-        let this = Self {
+        Ok(Self {
             cmd_tx,
             result_rx,
             next_id: 0,
-            thread_handle: Some(handle),
-        };
-
-        // Wait for Init message from render thread
-        let (page_count, outline) = match this.result_rx.recv() {
-            Ok(ToMain::Init {
-                page_count,
-                outline,
-            }) => (page_count, outline),
-            other => {
-                return Err(anyhow!("render thread init failed: {other:?}"));
-            }
-        };
-
-        Ok((this, page_count, outline))
+        })
     }
 
-    fn render_thread(pdf_data: Vec<u8>, cmd_rx: Receiver<Cmd>, result_tx: Sender<ToMain>) {
-        let doc = match Document::from_bytes(&pdf_data, "pdf") {
+    fn render_thread(path: PathBuf, cmd_rx: Receiver<Cmd>, result_tx: Sender<ToMain>) {
+        let doc = match Document::open(path.as_os_str()) {
             Ok(d) => d,
             Err(_e) => {
                 let _ = result_tx.send(ToMain::Init {
@@ -82,7 +70,7 @@ impl RenderHandle {
                 return;
             }
         };
-        drop(pdf_data);
+        drop(path);
 
         let page_count = doc.page_count().unwrap_or(0) as usize;
         let outline = parse_outline(&doc);
@@ -94,13 +82,13 @@ impl RenderHandle {
         for cmd in cmd_rx {
             match cmd {
                 Cmd::Render {
-                    id,
+                    _id,
                     page_index,
                     scale,
                 } => {
                     let result = Self::render_page(&doc, page_index, scale);
                     let _ = result_tx.send(ToMain::Done {
-                        _id: id,
+                        _id,
                         page_index,
                         scale,
                         result,
@@ -122,7 +110,7 @@ impl RenderHandle {
         let scale = scale_type.scale_value();
         let ctm = Matrix::new_scale(scale, scale);
         let pixmap = page
-            .to_pixmap(&ctm, &Colorspace::device_rgb(), true, true)
+            .to_pixmap(&ctm, &Colorspace::device_rgb(), true, false)
             .map_err(|e| anyhow!("mupdf to_pixmap: {e}"))?;
         let width = pixmap.width();
         let height = pixmap.height();
@@ -130,30 +118,23 @@ impl RenderHandle {
         Ok((samples, width, height))
     }
 
-    pub fn submit(&mut self, page_index: usize, scale: ScaleType) -> Option<u64> {
+    pub fn submit(&mut self, page_index: usize, scale: ScaleType) {
         let id = self.next_id;
         self.next_id += 1;
-        match self.cmd_tx.send(Cmd::Render {
-            id,
+        let _ = self.cmd_tx.send(Cmd::Render {
+            _id: id,
             page_index,
             scale,
-        }) {
-            Ok(_) => Some(id),
-            Err(_) => None,
-        }
+        });
     }
 
     pub fn poll(&mut self) -> Option<ToMain> {
         self.result_rx.try_recv().ok()
     }
-
 }
 
 impl Drop for RenderHandle {
     fn drop(&mut self) {
         let _ = self.cmd_tx.send(Cmd::Shutdown);
-        if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
-        }
     }
 }

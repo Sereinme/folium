@@ -3,7 +3,7 @@ pub mod outline;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use gpui::RenderImage;
 use image::{Frame, RgbaImage};
 use smallvec::SmallVec;
@@ -17,54 +17,43 @@ pub struct PdfDocument {
     pub outline: Vec<OutlineItem>,
     pub pages: Vec<Option<PdfPageImage>>,
     pub thumbnails: Vec<Option<PdfPageImage>>,
+    pub initialized: bool,
     handle: RenderHandle,
 }
 
 impl PdfDocument {
+    /// Non-blocking open: spawns render thread, returns immediately.
+    /// Call poll_render_results() each frame until initialized == true.
     pub fn open(path: PathBuf) -> Result<Self> {
-        let data = std::fs::read(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-
-        let (handle, page_count, outline) = RenderHandle::start(data)?;
+        let handle = RenderHandle::start(path.clone())?;
 
         Ok(Self {
             path,
-            page_count,
-            outline,
-            pages: vec![None; page_count],
-            thumbnails: vec![None; page_count],
+            page_count: 0,
+            outline: Vec::new(),
+            pages: Vec::new(),
+            thumbnails: Vec::new(),
+            initialized: false,
             handle,
         })
     }
 
-    pub fn request_render(&mut self, page_index: usize, scale: ScaleType) {
-        if page_index >= self.page_count {
-            return;
-        }
-        if self.is_cached(page_index, scale) {
-            return;
-        }
-        self.handle.submit(page_index, scale);
-    }
-
-    pub fn is_cached(&self, page_index: usize, scale: ScaleType) -> bool {
-        match scale {
-            ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref).is_some(),
-            ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref).is_some(),
-        }
-    }
-
-    pub fn cached_page(&self, page_index: usize, scale: ScaleType) -> Option<&PdfPageImage> {
-        match scale {
-            ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref),
-            ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref),
-        }
-    }
-
-    pub fn poll_render_results(&mut self) {
+    /// Must be called each frame.  Handles Init message (non-blocking).
+    pub fn poll_render_results(&mut self) -> bool {
+        let mut changed = false;
         while let Some(msg) = self.handle.poll() {
             match msg {
-                ToMain::Init { .. } => {}
+                ToMain::Init {
+                    page_count,
+                    outline,
+                } => {
+                    self.page_count = page_count;
+                    self.outline = outline;
+                    self.pages = vec![None; page_count];
+                    self.thumbnails = vec![None; page_count];
+                    self.initialized = true;
+                    changed = true;
+                }
                 ToMain::Done {
                     page_index,
                     scale,
@@ -81,6 +70,7 @@ impl PdfDocument {
                                 ScaleType::Full => self.pages[page_index] = Some(image),
                                 ScaleType::Thumb => self.thumbnails[page_index] = Some(image),
                             }
+                            changed = true;
                         }
                         Err(e) => {
                             eprintln!("render failed for page {page_index}: {e}");
@@ -88,6 +78,37 @@ impl PdfDocument {
                     }
                 }
             }
+        }
+        changed
+    }
+
+    pub fn request_render(&mut self, page_index: usize, scale: ScaleType) {
+        if !self.initialized || page_index >= self.page_count {
+            return;
+        }
+        if self.is_cached(page_index, scale) {
+            return;
+        }
+        self.handle.submit(page_index, scale);
+    }
+
+    pub fn is_cached(&self, page_index: usize, scale: ScaleType) -> bool {
+        if !self.initialized || page_index >= self.page_count {
+            return false;
+        }
+        match scale {
+            ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref).is_some(),
+            ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref).is_some(),
+        }
+    }
+
+    pub fn cached_page(&self, page_index: usize, scale: ScaleType) -> Option<&PdfPageImage> {
+        if !self.initialized || page_index >= self.page_count {
+            return None;
+        }
+        match scale {
+            ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref),
+            ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref),
         }
     }
 }
