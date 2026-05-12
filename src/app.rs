@@ -26,8 +26,7 @@ pub struct PdfReader {
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
     pub outline_collapsed: HashSet<Vec<usize>>,
-    pub wheel_accumulator: f32,             // accumulated scroll wheel delta for current_page
-    pub scroll_handle: ScrollHandle,        // reader body scroll
+    pub scroll_offset: f32,                  // manual scroll: how far we've scrolled in pixels
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
     render_queue: VecDeque<(usize, ScaleType)>,
 }
@@ -42,8 +41,7 @@ impl PdfReader {
             status: None,
             app_menu_bar,
             outline_collapsed: HashSet::new(),
-            wheel_accumulator: 0.0,
-            scroll_handle: ScrollHandle::new(),
+            scroll_offset: 0.0,
             sidebar_scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
         };
@@ -59,7 +57,7 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
-                self.wheel_accumulator = 0.0;
+                self.scroll_offset = 0.0;
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.render_queue.clear();
@@ -97,8 +95,13 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        self.wheel_accumulator = 0.0;
-        self.scroll_handle.scroll_to_top_of_item(page_index);
+        // Compute scroll offset from page dims
+        if let Some(doc) = &self.document {
+            let (nw, nh) = doc.page_dim(page_index);
+            let a = if nw > 0.0 { nh / nw } else { 1.414 };
+            let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
+            self.scroll_offset = page_index as f32 * step;
+        }
         self.sidebar_scroll_handle.scroll_to_item(page_index);
         self.rebuild_render_queue();
         cx.notify();
@@ -107,8 +110,11 @@ impl PdfReader {
     fn previous_page(&mut self, cx: &mut Context<Self>) {
         if self.current_page > 0 {
             self.current_page -= 1;
-            self.wheel_accumulator = 0.0;
-            self.scroll_handle.scroll_to_top_of_item(self.current_page);
+            if let Some(doc) = &self.document {
+                let (nw, nh) = doc.page_dim(self.current_page);
+                let a = if nw > 0.0 { nh / nw } else { 1.414 };
+                self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
+            }
             self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.rebuild_render_queue();
             cx.notify();
@@ -119,8 +125,11 @@ impl PdfReader {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
-                self.wheel_accumulator = 0.0;
-                self.scroll_handle.scroll_to_top_of_item(self.current_page);
+                if let Some(doc) = &self.document {
+                    let (nw, nh) = doc.page_dim(self.current_page);
+                    let a = if nw > 0.0 { nh / nw } else { 1.414 };
+                    self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
+                }
                 self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.rebuild_render_queue();
                 cx.notify();
@@ -214,8 +223,6 @@ impl PdfReader {
         changed || submitted
     }
 }
-
-impl PdfReader {}
 
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

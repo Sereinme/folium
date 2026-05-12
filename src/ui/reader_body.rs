@@ -1,6 +1,5 @@
 use gpui::{
-    div, img, px, AnyElement, Context, ElementId, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled,
+    div, img, px, AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Styled,
 };
 use gpui_component::button::ButtonVariants;
 
@@ -23,58 +22,64 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
     let page_w = MAX_PAGE_W.min(nw.max(595.0));
     let page_h = page_w * aspect;
     let step = page_h + PAGE_GAP;
-    let page_count = document.page_count;
+    let max_page = document.page_count;
 
-    // Scrollable container
+    // Clamp scroll offset
+    let max_off = ((max_page as f32 * step) - 800.0).max(0.0);
+    pdfr.scroll_offset = pdfr.scroll_offset.clamp(0.0, max_off);
+
+    // Update current_page from scroll offset
+    let new_page = (pdfr.scroll_offset / step).round() as usize;
+    if new_page < max_page && new_page != pdfr.current_page {
+        pdfr.current_page = new_page;
+    }
+
+    // Fixed viewport with overflow_hidden — inner content shifted by scroll_offset
     let mut frame = div()
-        .id(ElementId::named_usize("reader-body-scroll", 0))
-        .track_scroll(&pdfr.scroll_handle)
-        .overflow_y_scroll()
         .flex_1()
         .h_full()
-        .bg(styles::BG_READER)
-        .p_6()
+        .relative()
+        .overflow_hidden()
+        .bg(styles::BG_READER);
+
+    // Capture scroll wheel (viewport is NOT scrollable, so GPUI doesn't consume events)
+    let max_cap = max_off;
+    frame.interactivity().on_scroll_wheel(cx.listener(
+        move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
+            let px_delta = event.delta.pixel_delta(px(30.0));
+            let delta: f32 = f32::from(px_delta.y);
+            this.scroll_offset -= delta;
+            this.scroll_offset = this.scroll_offset.clamp(0.0, max_cap);
+            cx.notify();
+        },
+    ));
+
+    if !document.initialized {
+        return frame
+            .child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(styles::TEXT_SECONDARY)
+                    .text_sm()
+                    .child("Loading document…"),
+            )
+            .into_any_element();
+    }
+
+    // Inner content: shifted by -scroll_offset
+    let mut inner = div()
+        .relative()
+        .top(px(-pdfr.scroll_offset))
         .flex()
         .flex_col()
         .items_center()
         .gap(px(PAGE_GAP));
 
-    // Loading state
-    if !document.initialized {
-        frame = frame.child(
-            div()
-                .flex_1()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(styles::TEXT_SECONDARY)
-                .text_sm()
-                .child("Loading document…"),
-        );
-        return frame.into_any_element();
-    }
-
-    // Wheel → update wheel_accumulator + current_page + sidebar scroll
-    let step_cap = step;
-    let max_page = page_count;
-    frame.interactivity().on_scroll_wheel(cx.listener(
-        move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
-            let px_delta = event.delta.pixel_delta(px(30.0));
-            let delta: f32 = f32::from(px_delta.y);
-            this.wheel_accumulator -= delta;
-
-            let new_page = (this.wheel_accumulator / step_cap).round() as usize;
-            if new_page < max_page && new_page != this.current_page {
-                this.current_page = new_page;
-                this.sidebar_scroll_handle.scroll_to_item(new_page);
-            }
-            cx.notify();
-        },
-    ));
-
-    // Render all pages
-    for i in 0..page_count {
+    for i in 0..max_page {
         let display_h = page_h;
         let is_current = i == pdfr.current_page;
 
@@ -108,10 +113,10 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
             );
         }
 
-        frame = frame.child(page);
+        inner = inner.child(page);
     }
 
-    frame.into_any_element()
+    frame.child(inner).into_any_element()
 }
 
 fn no_pdf_view(cx: &mut Context<PdfReader>) -> AnyElement {
