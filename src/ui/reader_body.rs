@@ -101,17 +101,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         } else if let Some(thumb) = document.cached_page(i, ScaleType::Thumb) {
             page = page.child(img(thumb.image.clone()).w_full().h_full());
         } else {
-            page = page.child(
-                div()
-                    .w_full()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(styles::TEXT_SECONDARY)
-                    .text_xs()
-                    .child(format!("Page {}", i + 1)),
-            );
+            page = page.bg(styles::BG_WHITE);
         }
 
         inner = inner.child(page);

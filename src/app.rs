@@ -157,10 +157,11 @@ impl PdfReader {
         for radius in 0..=RENDER_FULL_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
+                // Preview first (fast readable), then Thumb (sidebar), then Full (crisp)
+                self.render_queue.push_back((i, ScaleType::Preview));
                 if !document.is_cached(i, ScaleType::Thumb) {
                     self.render_queue.push_back((i, ScaleType::Thumb));
                 }
-                self.render_queue.push_back((i, ScaleType::Preview));
                 if !document.is_cached(i, ScaleType::Full) {
                     self.render_queue.push_back((i, ScaleType::Full));
                 }
