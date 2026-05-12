@@ -16,15 +16,14 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-/// Full scale: how many pages above/below viewport to render ahead
-const SCROLL_VIEW_FULL: usize = 10;
-/// Thumbnails: wider pre-render range for sidebar + scroll buffer
-const SCROLL_VIEW_THUMB: usize = 25;
+/// Full-scale pages to render outward from current page (both directions)
+const RENDER_FULL_RADIUS: usize = 30;
+/// Thumbnail buffer radius
+const RENDER_THUMB_RADIUS: usize = 80;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
     pub current_page: usize,
-    pub scroll_window_start: usize,
     pub sidebar_tab: SidebarTab,
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
@@ -38,7 +37,6 @@ impl PdfReader {
         let mut this = Self {
             document: None,
             current_page: 0,
-            scroll_window_start: 0,
             sidebar_tab: SidebarTab::Thumbnails,
             status: None,
             app_menu_bar,
@@ -57,7 +55,6 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
-                self.scroll_window_start = 0;
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.document = Some(document);
@@ -94,7 +91,6 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        self.scroll_window_start = page_index;
         self.rebuild_render_queue();
         cx.notify();
     }
@@ -134,26 +130,27 @@ impl PdfReader {
         let cur = self.current_page;
         let max = document.page_count;
 
-        // ── Visible window: full scale for pages near current viewport ──
-        let full_start = cur.saturating_sub(SCROLL_VIEW_FULL);
-        let full_end = (cur + SCROLL_VIEW_FULL + 1).min(max);
-        for i in full_start..full_end {
-            if !document.is_cached(i, ScaleType::Thumb) {
-                self.render_queue.push_back((i, ScaleType::Thumb));
-            }
-            self.render_queue.push_back((i, ScaleType::Preview));
-            if !document.is_cached(i, ScaleType::Full) {
-                self.render_queue.push_back((i, ScaleType::Full));
+        // Ripple outward from current page for full scale
+        for radius in 0..=RENDER_FULL_RADIUS {
+            for &i in &[cur.wrapping_sub(radius), cur + radius] {
+                if i >= max { continue; }
+                if !document.is_cached(i, ScaleType::Thumb) {
+                    self.render_queue.push_back((i, ScaleType::Thumb));
+                }
+                self.render_queue.push_back((i, ScaleType::Preview));
+                if !document.is_cached(i, ScaleType::Full) {
+                    self.render_queue.push_back((i, ScaleType::Full));
+                }
             }
         }
 
-        // ── Thumbnail buffer: wider range for sidebar + scroll previews ──
-        let thumb_start = cur.saturating_sub(SCROLL_VIEW_THUMB);
-        let thumb_end = (cur + SCROLL_VIEW_THUMB + 1).min(max);
-        for i in thumb_start..thumb_end {
-            if i >= full_start && i < full_end { continue; }
-            if !document.is_cached(i, ScaleType::Thumb) {
-                self.render_queue.push_back((i, ScaleType::Thumb));
+        // Wider thumbnail-only buffer
+        for radius in (RENDER_FULL_RADIUS + 1)..=RENDER_THUMB_RADIUS {
+            for &i in &[cur.wrapping_sub(radius), cur + radius] {
+                if i >= max { continue; }
+                if !document.is_cached(i, ScaleType::Thumb) {
+                    self.render_queue.push_back((i, ScaleType::Thumb));
+                }
             }
         }
     }
@@ -174,9 +171,8 @@ impl PdfReader {
         let needs_rebuild = self.render_queue.is_empty()
             && self.document.as_ref().is_some_and(|d| {
                 let cur = self.current_page;
-                let start = cur.saturating_sub(SCROLL_VIEW_FULL);
-                let end = (cur + SCROLL_VIEW_FULL + 1).min(d.page_count);
-                (start..end)
+                let end = (cur + RENDER_FULL_RADIUS + 1).min(d.page_count);
+                (cur..end)
                     .any(|i| !d.is_cached(i, ScaleType::Full) || !d.is_cached(i, ScaleType::Thumb))
             });
 

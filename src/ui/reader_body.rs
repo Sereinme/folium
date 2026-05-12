@@ -1,5 +1,5 @@
 use gpui::{
-    div, img, px, Context, IntoElement, ParentElement, Styled,
+    div, img, px, AnyElement, Context, IntoElement, ParentElement, Styled,
 };
 use gpui_component::button::ButtonVariants;
 use gpui_component::scroll::ScrollableElement;
@@ -9,13 +9,46 @@ use crate::PdfReader;
 
 use super::styles;
 
-/// How many pages to render in the scrollable window
-const SCROLL_WINDOW_MAX: usize = 60;
-/// Gap between consecutive pages
-const PAGE_GAP: f32 = 16.0;
+/// Number of pages rendered ahead from scroll start
+const WINDOW_SIZE: usize = 150;
 
-pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl IntoElement {
-    let mut container = div()
+pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElement {
+    let Some(document) = &mut pdfr.document else {
+        return div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_3()
+                    .text_color(styles::TEXT_PRIMARY)
+                    .child("No PDF open")
+                    .child(
+                        gpui_component::button::Button::new("open-empty")
+                            .primary()
+                            .label("Open PDF")
+                            .on_click(
+                                cx.listener(|this: &mut PdfReader, _, window, cx| {
+                                    this.open_pdf(window, cx);
+                                }),
+                            ),
+                    ),
+            )
+            .into_any_element();
+    };
+
+    let start = pdfr
+        .current_page
+        .saturating_sub(5)
+        .min(document.page_count.saturating_sub(1));
+    let end = (start + WINDOW_SIZE).min(document.page_count);
+
+    let mut body = div()
         .flex_1()
         .h_full()
         .overflow_y_scrollbar()
@@ -24,32 +57,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(PAGE_GAP));
-
-    let Some(document) = &mut pdfr.document else {
-        return container.items_center().child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_3()
-                .text_color(styles::TEXT_PRIMARY)
-                .child("No PDF open")
-                .child(
-                    gpui_component::button::Button::new("open-empty")
-                        .primary()
-                        .label("Open PDF")
-                        .on_click(
-                            cx.listener(|this: &mut PdfReader, _, window, cx| {
-                                this.open_pdf(window, cx);
-                            }),
-                        ),
-                ),
-        );
-    };
-
-    let start = pdfr.scroll_window_start;
-    let end = (start + SCROLL_WINDOW_MAX).min(document.page_count);
+        .gap(px(12.0));
 
     for i in start..end {
         let (nw, nh) = document.page_dim(i);
@@ -58,11 +66,11 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
         let display_h = display_w * aspect;
         let is_current = i == pdfr.current_page;
 
-        let mut page_outer = div()
+        let mut page_div = div()
             .flex_none()
             .w(px(display_w))
             .h(px(display_h))
-            .rounded_md()
+            .rounded(px(4.0))
             .overflow_hidden()
             .border_1()
             .border_color(if is_current {
@@ -73,19 +81,19 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
             .bg(styles::BG_WHITE);
 
         if let Some(cached) = document.cached_page(i, ScaleType::Full) {
-            page_outer = page_outer.child(
+            page_div = page_div.child(
                 img(cached.image.clone()).w_full().h_full(),
             );
         } else if let Some(preview) = document.cached_page(i, ScaleType::Preview) {
-            page_outer = page_outer.child(
+            page_div = page_div.child(
                 img(preview.image.clone()).w_full().h_full(),
             );
         } else if let Some(thumb) = document.cached_page(i, ScaleType::Thumb) {
-            page_outer = page_outer.child(
+            page_div = page_div.child(
                 img(thumb.image.clone()).w_full().h_full(),
             );
         } else {
-            page_outer = page_outer.child(
+            page_div = page_div.child(
                 div()
                     .w_full()
                     .h_full()
@@ -93,13 +101,13 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
                     .items_center()
                     .justify_center()
                     .text_color(styles::TEXT_SECONDARY)
-                    .text_sm()
+                    .text_xs()
                     .child(format!("Page {}", i + 1)),
             );
         }
 
-        container = container.child(page_outer);
+        body = body.child(page_div);
     }
 
-    container
+    body.into_any_element()
 }
