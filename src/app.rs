@@ -54,7 +54,6 @@ impl PdfReader {
                 self.current_page = 0;
                 self.status = None;
                 self.outline_collapsed.clear();
-                self.render_queue.clear();
                 self.document = Some(document);
             }
             Err(error) => {
@@ -148,13 +147,33 @@ impl PdfReader {
     }
 
     fn poll_and_submit(&mut self) -> bool {
-        let Some(document) = &mut self.document else { return false; };
+        let inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
-        let changed = document.poll_render_results();
-
-        if !document.initialized {
-            return changed || true;
+        if !inited {
+            return true;
         }
+
+        let needs_rebuild = self.render_queue.is_empty()
+            && self.document.as_ref().is_some_and(|d| {
+                let cur = self.current_page;
+                let start = cur.saturating_sub(RENDER_RANGE);
+                let end = (cur + RENDER_RANGE + 1).min(d.page_count);
+                (start..end).any(|i| {
+                    let scale = if i == cur {
+                        ScaleType::Full
+                    } else {
+                        ScaleType::Thumb
+                    };
+                    !d.is_cached(i, scale)
+                })
+            });
+
+        if needs_rebuild {
+            self.rebuild_render_queue();
+        }
+
+        let Some(document) = &mut self.document else { return false; };
+        let changed = document.poll_render_results();
 
         let mut submitted = false;
         while let Some((idx, scale)) = self.render_queue.pop_front() {

@@ -60,7 +60,18 @@ impl RenderHandle {
     }
 
     fn render_thread(path: PathBuf, cmd_rx: Receiver<Cmd>, result_tx: Sender<ToMain>) {
-        let doc = match Document::open(path.as_os_str()) {
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(_) => {
+                let _ = result_tx.send(ToMain::Init {
+                    page_count: 0,
+                    outline: Vec::new(),
+                });
+                return;
+            }
+        };
+
+        let doc = match Document::from_bytes(&data, "pdf") {
             Ok(d) => d,
             Err(_e) => {
                 let _ = result_tx.send(ToMain::Init {
@@ -70,7 +81,7 @@ impl RenderHandle {
                 return;
             }
         };
-        drop(path);
+        drop(data);
 
         let page_count = doc.page_count().unwrap_or(0) as usize;
         let outline = parse_outline(&doc);
@@ -110,7 +121,7 @@ impl RenderHandle {
         let scale = scale_type.scale_value();
         let ctm = Matrix::new_scale(scale, scale);
         let pixmap = page
-            .to_pixmap(&ctm, &Colorspace::device_rgb(), true, false)
+            .to_pixmap(&ctm, &Colorspace::device_rgb(), true, true)
             .map_err(|e| anyhow!("mupdf to_pixmap: {e}"))?;
         let width = pixmap.width();
         let height = pixmap.height();
