@@ -103,7 +103,7 @@ impl PdfDocument {
     }
 
     pub fn can_render(&self) -> bool {
-        self.inflight < 10
+        self.inflight < 50
     }
 
     pub fn request_render(&mut self, page_index: usize, scale: ScaleType) {

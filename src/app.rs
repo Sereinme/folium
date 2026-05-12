@@ -205,6 +205,7 @@ impl PdfReader {
         }
 
         let needs_rebuild = self.render_queue.is_empty()
+            && self.document.as_ref().map_or(false, |d| d.inflight == 0)
             && self.document.as_ref().is_some_and(|d| {
                 let cur = self.current_page;
                 let end = (cur + RENDER_FULL_RADIUS + 1).min(d.page_count);
@@ -247,7 +248,7 @@ impl Render for PdfReader {
         if needs_refresh
             || self.document.as_ref().is_some_and(|d| {
                 if !d.initialized { return true; }
-                d.inflight > 0 || !self.render_queue.is_empty()
+                d.inflight > 0
             })
         {
             cx.notify();
