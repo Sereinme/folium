@@ -24,6 +24,7 @@ const RENDER_THUMB_RADIUS: usize = 80;
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
     pub current_page: usize,
+    pub scroll_offset: f32,
     pub sidebar_tab: SidebarTab,
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
@@ -37,6 +38,7 @@ impl PdfReader {
         let mut this = Self {
             document: None,
             current_page: 0,
+            scroll_offset: 0.0,
             sidebar_tab: SidebarTab::Thumbnails,
             status: None,
             app_menu_bar,
@@ -55,6 +57,7 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
+                self.scroll_offset = 0.0;
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.document = Some(document);
@@ -91,6 +94,9 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
+        // Estimate scroll target using average page height
+        let est_page_h = 860.0 * 1.4 + 12.0; // avg display_h + gap
+        self.scroll_offset = page_index as f32 * est_page_h;
         self.rebuild_render_queue();
         cx.notify();
     }
