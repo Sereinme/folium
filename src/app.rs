@@ -218,8 +218,8 @@ impl PdfReader {
     /// Find which page occupies the most viewport area.
     fn majority_page(&self) -> Option<usize> {
         let vp = self.scroll_handle.bounds();
-        let vp_top: f32 = f32::from(vp.top());
-        let vp_bot: f32 = f32::from(vp.bottom());
+        let vp_h: f32 = f32::from(vp.size.height);
+        let scroll_off: f32 = f32::from(self.scroll_handle.offset().y);
         let top = self.scroll_handle.top_item();
         let bot = self.scroll_handle.bottom_item();
 
@@ -228,9 +228,10 @@ impl PdfReader {
 
         for i in top..=bot {
             if let Some(b) = self.scroll_handle.bounds_for_item(i) {
-                let item_top: f32 = f32::from(b.top());
-                let item_bot: f32 = f32::from(b.bottom());
-                let visible = item_bot.min(vp_bot) - item_top.max(vp_top);
+                // Item bounds in content space + scroll offset → viewport space
+                let item_vis_top = f32::from(b.top()) - scroll_off;
+                let item_vis_bot = f32::from(b.bottom()) - scroll_off;
+                let visible = item_vis_bot.min(vp_h) - item_vis_top.max(0.0_f32);
                 if visible > best_visible {
                     best_visible = visible;
                     best = Some(i);
