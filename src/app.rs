@@ -26,7 +26,8 @@ pub struct PdfReader {
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
     pub outline_collapsed: HashSet<Vec<usize>>,
-    pub scroll_handle: ScrollHandle,
+    pub scroll_handle: ScrollHandle,        // reader body scroll
+    pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
     render_queue: VecDeque<(usize, ScaleType)>,
 }
 
@@ -41,6 +42,7 @@ impl PdfReader {
             app_menu_bar,
             outline_collapsed: HashSet::new(),
             scroll_handle: ScrollHandle::new(),
+            sidebar_scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
         };
 
@@ -93,6 +95,7 @@ impl PdfReader {
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
         self.scroll_handle.scroll_to_top_of_item(page_index);
+        // Sidebar scroll handled by sync_sidebar_from_scroll (next frame)
         self.rebuild_render_queue();
         cx.notify();
     }
@@ -100,6 +103,7 @@ impl PdfReader {
     fn previous_page(&mut self, cx: &mut Context<Self>) {
         if self.current_page > 0 {
             self.current_page -= 1;
+            self.scroll_handle.scroll_to_top_of_item(self.current_page);
             self.rebuild_render_queue();
             cx.notify();
         }
@@ -109,6 +113,7 @@ impl PdfReader {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
+                self.scroll_handle.scroll_to_top_of_item(self.current_page);
                 self.rebuild_render_queue();
                 cx.notify();
             }
@@ -202,8 +207,25 @@ impl PdfReader {
     }
 }
 
+impl PdfReader {
+    /// Every frame: reads reader scroll position → updates current_page → syncs sidebar scroll
+    fn sync_sidebar_from_scroll(&mut self) {
+        let Some(document) = &self.document else { return };
+        if !document.initialized { return; }
+
+        let top = self.scroll_handle.top_item();
+        if top < document.page_count && top != self.current_page {
+            self.current_page = top;
+        }
+
+        // Always scroll sidebar to current page (harmless if already at correct position)
+        self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
+    }
+}
+
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_sidebar_from_scroll();
         let needs_refresh = self.poll_and_submit();
 
         if needs_refresh

@@ -1,48 +1,44 @@
 use gpui::{
     div, img, px, AnyElement, Context, ElementId, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Styled, StyledImage,
+    ParentElement, StatefulInteractiveElement, Styled, StyledImage,
 };
-use gpui_component::scroll::ScrollableElement;
 
 use crate::types::ScaleType;
 use crate::PdfReader;
 
 use super::styles;
 
-/// Thumbnail window: pages before/after current_page shown in sidebar
-const THUMB_RADIUS: usize = 30;
-
 pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElement {
     let Some(document) = &mut pdfr.document else {
         return div()
-            .overflow_y_scrollbar()
+            .flex_1()
             .h_full()
-            .p_2()
             .flex()
-            .flex_col()
-            .gap_2()
-            .child(empty_sidebar())
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .p_3()
+                    .text_sm()
+                    .text_color(styles::TEXT_SECONDARY)
+                    .child("Open a PDF to show pages."),
+            )
             .into_any_element();
     };
 
-    // Element ID encodes current_page → fresh scroll state on navigate
-    // makes current_page thumbnail visible at the window's center
-    let scroll_id = ElementId::named_usize("thumb-scroll", pdfr.current_page);
-    let cur = pdfr.current_page;
-    let start = cur.saturating_sub(THUMB_RADIUS);
-    let end = (cur + THUMB_RADIUS + 1).min(document.page_count);
-
+    // Fixed element ID — track_scroll + ScrollHandle handle programmatic scroll
     let mut list = div()
-        .id(scroll_id)
-        .overflow_y_scrollbar()
+        .id(ElementId::named_usize("sidebar-thumbnails", 0))
+        .track_scroll(&pdfr.sidebar_scroll_handle)
+        .overflow_y_scroll()
         .h_full()
         .p_2()
         .flex()
         .flex_col()
         .gap_2();
 
-    for page_index in start..end {
-        let selected = cur == page_index;
+    for page_index in 0..document.page_count {
+        let selected = pdfr.current_page == page_index;
 
         let mut item = div()
             .p_2()
@@ -95,12 +91,4 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
     }
 
     list.into_any_element()
-}
-
-fn empty_sidebar() -> impl IntoElement {
-    div()
-        .p_3()
-        .text_sm()
-        .text_color(styles::TEXT_SECONDARY)
-        .child("Open a PDF to show pages.")
 }
