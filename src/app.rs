@@ -98,7 +98,7 @@ impl PdfReader {
         self.current_page = page_index;
         self.skip_sync = true;
         self.scroll_handle.scroll_to_top_of_item(page_index);
-        self.sidebar_scroll_handle.scroll_to_top_of_item(page_index);
+        self.sidebar_scroll_handle.scroll_to_item(page_index);
         self.rebuild_render_queue();
         cx.notify();
     }
@@ -108,7 +108,7 @@ impl PdfReader {
             self.current_page -= 1;
             self.skip_sync = true;
             self.scroll_handle.scroll_to_top_of_item(self.current_page);
-            self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
+            self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.rebuild_render_queue();
             cx.notify();
         }
@@ -120,7 +120,7 @@ impl PdfReader {
                 self.current_page += 1;
                 self.skip_sync = true;
                 self.scroll_handle.scroll_to_top_of_item(self.current_page);
-                self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
+                self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.rebuild_render_queue();
                 cx.notify();
             }
@@ -215,22 +215,47 @@ impl PdfReader {
 }
 
 impl PdfReader {
+    /// Find which page occupies the most viewport area.
+    fn majority_page(&self) -> Option<usize> {
+        let vp = self.scroll_handle.bounds();
+        let vp_top: f32 = f32::from(vp.top());
+        let vp_bot: f32 = f32::from(vp.bottom());
+        let top = self.scroll_handle.top_item();
+        let bot = self.scroll_handle.bottom_item();
+
+        let mut best = None;
+        let mut best_visible = 0.0_f32;
+
+        for i in top..=bot {
+            if let Some(b) = self.scroll_handle.bounds_for_item(i) {
+                let item_top: f32 = f32::from(b.top());
+                let item_bot: f32 = f32::from(b.bottom());
+                let visible = item_bot.min(vp_bot) - item_top.max(vp_top);
+                if visible > best_visible {
+                    best_visible = visible;
+                    best = Some(i);
+                }
+            }
+        }
+        best
+    }
+
     /// Every frame: syncs current_page + sidebar scroll from reader scroll position.
     /// Skips one frame after programmatic scroll (select_page/nav) to avoid stale top_item().
     fn sync_sidebar_from_scroll(&mut self) {
         let Some(document) = &self.document else { return };
         if !document.initialized { return; }
 
-        // Skip one frame after programmatic scroll — prepaint hasn't processed it yet
         if self.skip_sync {
             self.skip_sync = false;
             return;
         }
 
-        let top = self.scroll_handle.top_item();
-        if top < document.page_count && top != self.current_page {
-            self.current_page = top;
-            self.sidebar_scroll_handle.scroll_to_top_of_item(top);
+        if let Some(page) = self.majority_page() {
+            if page < document.page_count && page != self.current_page {
+                self.current_page = page;
+                self.sidebar_scroll_handle.scroll_to_item(page);
+            }
         }
     }
 }
