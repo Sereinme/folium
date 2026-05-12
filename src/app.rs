@@ -26,9 +26,9 @@ pub struct PdfReader {
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
     pub outline_collapsed: HashSet<Vec<usize>>,
+    pub wheel_accumulator: f32,             // accumulated scroll wheel delta for current_page
     pub scroll_handle: ScrollHandle,        // reader body scroll
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
-    skip_sync: bool,                         // skip one frame after programmatic scroll
     render_queue: VecDeque<(usize, ScaleType)>,
 }
 
@@ -42,9 +42,9 @@ impl PdfReader {
             status: None,
             app_menu_bar,
             outline_collapsed: HashSet::new(),
+            wheel_accumulator: 0.0,
             scroll_handle: ScrollHandle::new(),
             sidebar_scroll_handle: ScrollHandle::new(),
-            skip_sync: false,
             render_queue: VecDeque::new(),
         };
 
@@ -59,6 +59,7 @@ impl PdfReader {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
+                self.wheel_accumulator = 0.0;
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.render_queue.clear();
@@ -96,7 +97,7 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        self.skip_sync = true;
+        self.wheel_accumulator = 0.0;
         self.scroll_handle.scroll_to_top_of_item(page_index);
         self.sidebar_scroll_handle.scroll_to_item(page_index);
         self.rebuild_render_queue();
@@ -106,7 +107,7 @@ impl PdfReader {
     fn previous_page(&mut self, cx: &mut Context<Self>) {
         if self.current_page > 0 {
             self.current_page -= 1;
-            self.skip_sync = true;
+            self.wheel_accumulator = 0.0;
             self.scroll_handle.scroll_to_top_of_item(self.current_page);
             self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.rebuild_render_queue();
@@ -118,7 +119,7 @@ impl PdfReader {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
-                self.skip_sync = true;
+                self.wheel_accumulator = 0.0;
                 self.scroll_handle.scroll_to_top_of_item(self.current_page);
                 self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.rebuild_render_queue();
@@ -214,56 +215,10 @@ impl PdfReader {
     }
 }
 
-impl PdfReader {
-    /// Find which page occupies the most viewport area.
-    fn majority_page(&self) -> Option<usize> {
-        let vp = self.scroll_handle.bounds();
-        let vp_h: f32 = f32::from(vp.size.height);
-        let scroll_off: f32 = f32::from(self.scroll_handle.offset().y);
-        let top = self.scroll_handle.top_item();
-        let bot = self.scroll_handle.bottom_item();
-
-        let mut best = None;
-        let mut best_visible = 0.0_f32;
-
-        for i in top..=bot {
-            if let Some(b) = self.scroll_handle.bounds_for_item(i) {
-                // Item bounds in content space + scroll offset → viewport space
-                let item_vis_top = f32::from(b.top()) - scroll_off;
-                let item_vis_bot = f32::from(b.bottom()) - scroll_off;
-                let visible = item_vis_bot.min(vp_h) - item_vis_top.max(0.0_f32);
-                if visible > best_visible {
-                    best_visible = visible;
-                    best = Some(i);
-                }
-            }
-        }
-        best
-    }
-
-    /// Every frame: syncs current_page + sidebar scroll from reader scroll position.
-    /// Skips one frame after programmatic scroll (select_page/nav) to avoid stale top_item().
-    fn sync_sidebar_from_scroll(&mut self) {
-        let Some(document) = &self.document else { return };
-        if !document.initialized { return; }
-
-        if self.skip_sync {
-            self.skip_sync = false;
-            return;
-        }
-
-        if let Some(page) = self.majority_page() {
-            if page < document.page_count && page != self.current_page {
-                self.current_page = page;
-                self.sidebar_scroll_handle.scroll_to_item(page);
-            }
-        }
-    }
-}
+impl PdfReader {}
 
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_sidebar_from_scroll();
         let needs_refresh = self.poll_and_submit();
 
         if needs_refresh
