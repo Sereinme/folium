@@ -1783,6 +1783,7 @@ dependencies = [
  "gpui-component-assets",
  "image",
  "mupdf",
+ "mupdf-sys",
  "rayon",
  "smallvec",
 ]

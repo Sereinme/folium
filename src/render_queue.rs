@@ -10,9 +10,30 @@ use rayon::prelude::*;
 use crate::pdf::outline::parse_outline;
 use crate::types::{OutlineItem, ScaleType};
 
+/// Call fz_shrink_store on the thread-local mupdf context to release
+/// cached decoded images, font glyphs, and other resources that mupdf
+/// keeps around for reuse. For large-image PDFs this can free hundreds
+/// of MB of decoded image data that's no longer needed.
+///
+/// SAFETY: mupdf::Context is a newtype around *mut fz_context with
+/// no Drop impl. We extract the raw pointer and pass it to fz_shrink_store.
+fn shrink_mupdf_store() {
+    // mupdf::Context is a single-field struct (inner: *mut fz_context).
+    // No Drop — the context is owned by the thread-local storage, not by
+    // the Context wrapper.
+    let ctx = mupdf::Context::get();
+    let raw: *mut mupdf_sys::fz_context = unsafe { std::mem::transmute_copy(&ctx) };
+    std::mem::forget(ctx);
+
+    // Shrink to 50% of current size — evict the least-recently-used half.
+    unsafe {
+        mupdf_sys::fz_shrink_store(raw, 50);
+    }
+}
+
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
 
-const DL_CACHE_MAX: usize = 20;
+const DL_CACHE_MAX: usize = 5;
 
 struct DlCache(Vec<(usize, DisplayList)>);
 
@@ -96,7 +117,8 @@ impl RenderHandle {
     }
 
     fn render_thread(path: PathBuf, cmd_rx: Receiver<Cmd>, result_tx: Sender<ToMain>) {
-        let doc = match Document::open(path.as_path()) {
+        let path_str = path.to_string_lossy();
+        let doc = match Document::open(&*path_str) {
             Ok(d) => d,
             Err(_) => {
                 let _ = result_tx.send(ToMain::Init { page_count: 0 });
@@ -163,6 +185,9 @@ impl RenderHandle {
 
                     if !batch.is_empty() {
                         Self::process_batch(&doc, &batch, &result_tx);
+                    } else {
+                        // Single-item render — still shrink store
+                        shrink_mupdf_store();
                     }
                 }
                 Cmd::Shutdown => break,
@@ -219,9 +244,11 @@ impl RenderHandle {
                     result,
                 });
             }
+
+            // Free decoded images/fonts accumulated during this batch
+            shrink_mupdf_store();
         } else {
             // ── Serial path (1–2 items) ───────────────────────────
-            // Create DLs fresh — too few items to warrant dedup overhead.
             for (_id, page_index, scale) in batch {
                 let dl = Self::load_display_list(doc, *page_index);
                 let result = Self::render_from_dl(&dl, *scale);

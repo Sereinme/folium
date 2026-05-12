@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build *)",
+      "Bash(find /Users/sereinme/Documents/Lab/Code/Rust/folium/target/release/build/mupdf-sys-*/out -name \"*.rs\" -path \"*/mupdf/*\")",
+      "Bash(find ~/.cargo/registry/src -name \"*.rs\" -path \"*mupdf*0.6*\" 2>/dev/null | head -30)",
+      "Bash(git config *)",
+      "Bash(where fxc.exe)",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\bin\\\\*\\\\x64\\\\fxc.exe\")",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\bin\\\\*\\\\x86\\\\fxc.exe\")",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\\\\10\\\\bin\")",
+      "Bash(dir \"C:\\\\Program Files \\(x86\\)\\\\Windows Kits\")",
+      "Bash(export PATH=\"$PATH:/c/Program Files \\(x86\\)/Windows Kits/10/bin/10.0.22621.0/x64\")"
+    ]
+  }
+}
