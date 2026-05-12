@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use anyhow::{anyhow, Result};
-use mupdf::{Colorspace, Document, Matrix};
+use mupdf::{Colorspace, DisplayList, Document, Matrix};
 
 use crate::pdf::outline::parse_outline;
 use crate::types::{OutlineItem, ScaleType};
@@ -22,8 +23,8 @@ enum Cmd {
 pub enum ToMain {
     Init {
         page_count: usize,
-        outline: Vec<OutlineItem>,
     },
+    Outline(Vec<OutlineItem>),
     Done {
         _id: u64,
         page_index: usize,
@@ -39,8 +40,6 @@ pub struct RenderHandle {
 }
 
 impl RenderHandle {
-    /// Spawns render thread and returns immediately (non-blocking).
-    /// Init message will arrive via poll().
     pub fn start(path: PathBuf) -> Result<Self> {
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (result_tx, result_rx) = mpsc::channel::<ToMain>();
@@ -63,10 +62,7 @@ impl RenderHandle {
         let data = match std::fs::read(&path) {
             Ok(d) => d,
             Err(_) => {
-                let _ = result_tx.send(ToMain::Init {
-                    page_count: 0,
-                    outline: Vec::new(),
-                });
+                let _ = result_tx.send(ToMain::Init { page_count: 0 });
                 return;
             }
         };
@@ -74,21 +70,25 @@ impl RenderHandle {
         let doc = match Document::from_bytes(&data, "pdf") {
             Ok(d) => d,
             Err(_e) => {
-                let _ = result_tx.send(ToMain::Init {
-                    page_count: 0,
-                    outline: Vec::new(),
-                });
+                let _ = result_tx.send(ToMain::Init { page_count: 0 });
                 return;
             }
         };
         drop(data);
 
         let page_count = doc.page_count().unwrap_or(0) as usize;
-        let outline = parse_outline(&doc);
 
-        if result_tx.send(ToMain::Init { page_count, outline }).is_err() {
+        // Send Init ASAP — UI can show layout immediately
+        if result_tx.send(ToMain::Init { page_count }).is_err() {
             return;
         }
+
+        // Parse outline in background (can be slow for complex PDFs)
+        let outline = parse_outline(&doc);
+        let _ = result_tx.send(ToMain::Outline(outline));
+
+        // Per-page DisplayList cache: parse content ONCE, render at any scale
+        let mut dls: HashMap<usize, DisplayList> = HashMap::new();
 
         for cmd in cmd_rx {
             match cmd {
@@ -97,7 +97,7 @@ impl RenderHandle {
                     page_index,
                     scale,
                 } => {
-                    let result = Self::render_page(&doc, page_index, scale);
+                    let result = Self::render_page(&doc, &mut dls, page_index, scale);
                     let _ = result_tx.send(ToMain::Done {
                         _id,
                         page_index,
@@ -112,17 +112,23 @@ impl RenderHandle {
 
     fn render_page(
         doc: &Document,
+        dls: &mut HashMap<usize, DisplayList>,
         page_index: usize,
         scale_type: ScaleType,
     ) -> Result<(Vec<u8>, u32, u32)> {
-        let page = doc
-            .load_page(page_index as i32)
-            .map_err(|e| anyhow!("mupdf load_page: {e}"))?;
+        let dl = dls.entry(page_index).or_insert_with(|| {
+            doc.load_page(page_index as i32)
+                .ok()
+                .and_then(|p| p.to_display_list(true).ok())
+                .unwrap()
+        });
+
         let scale = scale_type.scale_value();
         let ctm = Matrix::new_scale(scale, scale);
-        let pixmap = page
-            .to_pixmap(&ctm, &Colorspace::device_rgb(), true, true)
-            .map_err(|e| anyhow!("mupdf to_pixmap: {e}"))?;
+        let cs = Colorspace::device_rgb();
+        let pixmap = dl
+            .to_pixmap(&ctm, &cs, true)
+            .map_err(|e| anyhow!("mupdf dl.to_pixmap: {e}"))?;
         let width = pixmap.width();
         let height = pixmap.height();
         let samples = pixmap.samples().to_vec();

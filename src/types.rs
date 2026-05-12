@@ -11,6 +11,7 @@ pub enum SidebarTab {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScaleType {
     Full,
+    Preview,
     Thumb,
 }
 
@@ -18,6 +19,7 @@ impl ScaleType {
     pub fn scale_value(self) -> f32 {
         match self {
             ScaleType::Full => 2.0,
+            ScaleType::Preview => 1.0,
             ScaleType::Thumb => 0.25,
         }
     }

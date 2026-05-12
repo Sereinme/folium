@@ -17,13 +17,12 @@ pub struct PdfDocument {
     pub outline: Vec<OutlineItem>,
     pub pages: Vec<Option<PdfPageImage>>,
     pub thumbnails: Vec<Option<PdfPageImage>>,
+    pub preview: Option<PdfPageImage>,
     pub initialized: bool,
     handle: RenderHandle,
 }
 
 impl PdfDocument {
-    /// Non-blocking open: spawns render thread, returns immediately.
-    /// Call poll_render_results() each frame until initialized == true.
     pub fn open(path: PathBuf) -> Result<Self> {
         let handle = RenderHandle::start(path.clone())?;
 
@@ -33,25 +32,25 @@ impl PdfDocument {
             outline: Vec::new(),
             pages: Vec::new(),
             thumbnails: Vec::new(),
+            preview: None,
             initialized: false,
             handle,
         })
     }
 
-    /// Must be called each frame.  Handles Init message (non-blocking).
     pub fn poll_render_results(&mut self) -> bool {
         let mut changed = false;
         while let Some(msg) = self.handle.poll() {
             match msg {
-                ToMain::Init {
-                    page_count,
-                    outline,
-                } => {
+                ToMain::Init { page_count } => {
                     self.page_count = page_count;
-                    self.outline = outline;
                     self.pages = vec![None; page_count];
                     self.thumbnails = vec![None; page_count];
                     self.initialized = true;
+                    changed = true;
+                }
+                ToMain::Outline(outline) => {
+                    self.outline = outline;
                     changed = true;
                 }
                 ToMain::Done {
@@ -67,8 +66,16 @@ impl PdfDocument {
                         Ok((samples, width, height)) => {
                             let image = build_page_image(samples, width, height);
                             match scale {
-                                ScaleType::Full => self.pages[page_index] = Some(image),
-                                ScaleType::Thumb => self.thumbnails[page_index] = Some(image),
+                                ScaleType::Full => {
+                                    self.pages[page_index] = Some(image);
+                                    self.preview = None;
+                                }
+                                ScaleType::Preview => {
+                                    self.preview = Some(image);
+                                }
+                                ScaleType::Thumb => {
+                                    self.thumbnails[page_index] = Some(image);
+                                }
                             }
                             changed = true;
                         }
@@ -98,6 +105,7 @@ impl PdfDocument {
         }
         match scale {
             ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref).is_some(),
+            ScaleType::Preview => false,
             ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref).is_some(),
         }
     }
@@ -108,6 +116,7 @@ impl PdfDocument {
         }
         match scale {
             ScaleType::Full => self.pages.get(page_index).and_then(Option::as_ref),
+            ScaleType::Preview => self.preview.as_ref(),
             ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref),
         }
     }

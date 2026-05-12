@@ -44,8 +44,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
     let page_index = pdfr.current_page;
 
     if let Some(cached) = document.cached_page(page_index, ScaleType::Full) {
-        let scale = ScaleType::Full.scale_value();
-        let display_width = (cached.width as f32 / scale).min(980.0);
+        let display_width = (cached.width as f32 / ScaleType::Full.scale_value()).min(980.0);
         let display_height =
             display_width * cached.height as f32 / cached.width.max(1) as f32;
 
@@ -57,6 +56,22 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
                 .shadow_lg()
                 .child(
                     img(cached.image.clone())
+                        .w(px(display_width))
+                        .h(px(display_height))
+                        .object_fit(gpui::ObjectFit::Contain),
+                ),
+        );
+    } else if let Some(preview) = document.cached_page(page_index, ScaleType::Preview) {
+        let display_width = (preview.width as f32 / ScaleType::Preview.scale_value()).min(980.0);
+        let display_height =
+            display_width * preview.height as f32 / preview.width.max(1) as f32;
+        body = body.child(
+            div()
+                .bg(styles::BG_WHITE)
+                .border_1()
+                .border_color(styles::BORDER)
+                .child(
+                    img(preview.image.clone())
                         .w(px(display_width))
                         .h(px(display_height))
                         .object_fit(gpui::ObjectFit::Contain),

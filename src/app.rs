@@ -130,6 +130,7 @@ impl PdfReader {
         if !document.is_cached(cur, ScaleType::Thumb) {
             self.render_queue.push_back((cur, ScaleType::Thumb));
         }
+        self.render_queue.push_back((cur, ScaleType::Preview));
         if !document.is_cached(cur, ScaleType::Full) {
             self.render_queue.push_back((cur, ScaleType::Full));
         }
@@ -147,10 +148,16 @@ impl PdfReader {
     }
 
     fn poll_and_submit(&mut self) -> bool {
+        // MUST poll first — processes both Init and Done messages.
+        let changed = self
+            .document
+            .as_mut()
+            .map_or(false, |d| d.poll_render_results());
+
         let inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
         if !inited {
-            return true;
+            return changed || true;
         }
 
         let needs_rebuild = self.render_queue.is_empty()
@@ -172,14 +179,15 @@ impl PdfReader {
             self.rebuild_render_queue();
         }
 
-        let Some(document) = &mut self.document else { return false; };
-        let changed = document.poll_render_results();
-
+        // Drain queue into local vec to avoid borrow conflicts
+        let batch: Vec<_> = self.render_queue.drain(..).collect();
         let mut submitted = false;
-        while let Some((idx, scale)) = self.render_queue.pop_front() {
-            if !document.is_cached(idx, scale) {
-                document.request_render(idx, scale);
-                submitted = true;
+        if let Some(document) = &mut self.document {
+            for (idx, scale) in batch {
+                if !document.is_cached(idx, scale) {
+                    document.request_render(idx, scale);
+                    submitted = true;
+                }
             }
         }
         changed || submitted
