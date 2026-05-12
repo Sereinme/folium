@@ -18,6 +18,7 @@ pub struct PdfDocument {
     pub pages: Vec<Option<PdfPageImage>>,
     pub thumbnails: Vec<Option<PdfPageImage>>,
     pub preview: Option<PdfPageImage>,
+    pub page_dims: Vec<Option<(f32, f32)>>,  // (natural_w, natural_h) per page
     pub initialized: bool,
     pub inflight: usize,
     handle: RenderHandle,
@@ -34,6 +35,7 @@ impl PdfDocument {
             pages: Vec::new(),
             thumbnails: Vec::new(),
             preview: None,
+            page_dims: Vec::new(),
             initialized: false,
             inflight: 0,
             handle,
@@ -48,6 +50,7 @@ impl PdfDocument {
                     self.page_count = page_count;
                     self.pages = vec![None; page_count];
                     self.thumbnails = vec![None; page_count];
+                    self.page_dims = vec![None; page_count];
                     self.initialized = true;
                     changed = true;
                 }
@@ -67,6 +70,13 @@ impl PdfDocument {
                     }
                     match result {
                         Ok((samples, width, height)) => {
+                            // Record natural page dimensions on first render
+                            if self.page_dims[page_index].is_none() {
+                                let s = scale.scale_value();
+                                self.page_dims[page_index] =
+                                    Some((width as f32 / s, height as f32 / s));
+                            }
+
                             let image = build_page_image(samples, width, height);
                             match scale {
                                 ScaleType::Full => {
@@ -127,6 +137,14 @@ impl PdfDocument {
             ScaleType::Preview => self.preview.as_ref(),
             ScaleType::Thumb => self.thumbnails.get(page_index).and_then(Option::as_ref),
         }
+    }
+
+    /// Natural page dimensions (from any rendered scale), or a default A4 fallback
+    pub fn page_dim(&self, page_index: usize) -> (f32, f32) {
+        self.page_dims
+            .get(page_index)
+            .and_then(|d| *d)
+            .unwrap_or((595.0, 842.0)) // A4 fallback
     }
 }
 

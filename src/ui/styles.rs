@@ -18,7 +18,6 @@ pub const BG_SIDEBAR: Rgba = hex(0xf7f8fa);
 pub const BG_READER: Rgba = hex(0xe7e9ee);
 pub const BG_WHITE: Rgba = hex(0xffffff);
 pub const BORDER: Rgba = hex(0xd8dde6);
-pub const BORDER_STRONG: Rgba = hex(0xc9ced8);
 pub const TEXT_PRIMARY: Rgba = hex(0x303540);
 pub const TEXT_SECONDARY: Rgba = hex(0x677080);
 pub const TEXT_LINK: Rgba = hex(0x1a4bdb);

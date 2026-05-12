@@ -1,26 +1,33 @@
 use gpui::{
-    div, img, px, Context, IntoElement, ParentElement, Styled, StyledImage,
+    div, img, px, Context, IntoElement, ParentElement, Styled,
 };
+use gpui_component::button::ButtonVariants;
 use gpui_component::scroll::ScrollableElement;
 
 use crate::types::ScaleType;
 use crate::PdfReader;
-use gpui_component::button::ButtonVariants;
 
 use super::styles;
 
+/// How many pages to render in the scrollable window
+const SCROLL_WINDOW_MAX: usize = 60;
+/// Gap between consecutive pages
+const PAGE_GAP: f32 = 16.0;
+
 pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl IntoElement {
-    let mut body = div()
+    let mut container = div()
         .flex_1()
         .h_full()
         .overflow_y_scrollbar()
         .bg(styles::BG_READER)
         .p_6()
         .flex()
-        .justify_center();
+        .flex_col()
+        .items_center()
+        .gap(px(PAGE_GAP));
 
     let Some(document) = &mut pdfr.document else {
-        return body.items_center().child(
+        return container.items_center().child(
             div()
                 .flex()
                 .flex_col()
@@ -41,68 +48,58 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl In
         );
     };
 
-    let page_index = pdfr.current_page;
+    let start = pdfr.scroll_window_start;
+    let end = (start + SCROLL_WINDOW_MAX).min(document.page_count);
 
-    if let Some(cached) = document.cached_page(page_index, ScaleType::Full) {
-        let display_width = (cached.width as f32 / ScaleType::Full.scale_value()).min(980.0);
-        let display_height =
-            display_width * cached.height as f32 / cached.width.max(1) as f32;
+    for i in start..end {
+        let (nw, nh) = document.page_dim(i);
+        let aspect = if nw > 0.0 { nh / nw } else { 1.4 };
+        let display_w = 860.0_f32.min(nw);
+        let display_h = display_w * aspect;
+        let is_current = i == pdfr.current_page;
 
-        body = body.child(
-            div()
-                .bg(styles::BG_WHITE)
-                .border_1()
-                .border_color(styles::BORDER_STRONG)
-                .shadow_lg()
-                .child(
-                    img(cached.image.clone())
-                        .w(px(display_width))
-                        .h(px(display_height))
-                        .object_fit(gpui::ObjectFit::Contain),
-                ),
-        );
-    } else if let Some(preview) = document.cached_page(page_index, ScaleType::Preview) {
-        let display_width = (preview.width as f32 / ScaleType::Preview.scale_value()).min(980.0);
-        let display_height =
-            display_width * preview.height as f32 / preview.width.max(1) as f32;
-        body = body.child(
-            div()
-                .bg(styles::BG_WHITE)
-                .border_1()
-                .border_color(styles::BORDER)
-                .child(
-                    img(preview.image.clone())
-                        .w(px(display_width))
-                        .h(px(display_height))
-                        .object_fit(gpui::ObjectFit::Contain),
-                ),
-        );
-    } else if let Some(thumb) = document.cached_page(page_index, ScaleType::Thumb) {
-        let display_width = (thumb.width as f32 / ScaleType::Thumb.scale_value()).min(980.0);
-        let display_height = display_width * thumb.height as f32 / thumb.width.max(1) as f32;
-        body = body.child(
-            div()
-                .bg(styles::BG_WHITE)
-                .border_1()
-                .border_color(styles::BORDER)
-                .child(
-                    img(thumb.image.clone())
-                        .w(px(display_width))
-                        .h(px(display_height))
-                        .object_fit(gpui::ObjectFit::Contain),
-                ),
-        );
-    } else {
-        body = body.items_center().child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_2()
-                .text_color(styles::TEXT_SECONDARY)
-                .child("Loading page..."),
-        );
+        let mut page_outer = div()
+            .flex_none()
+            .w(px(display_w))
+            .h(px(display_h))
+            .rounded_md()
+            .overflow_hidden()
+            .border_1()
+            .border_color(if is_current {
+                styles::ACCENT
+            } else {
+                styles::BORDER
+            })
+            .bg(styles::BG_WHITE);
+
+        if let Some(cached) = document.cached_page(i, ScaleType::Full) {
+            page_outer = page_outer.child(
+                img(cached.image.clone()).w_full().h_full(),
+            );
+        } else if let Some(preview) = document.cached_page(i, ScaleType::Preview) {
+            page_outer = page_outer.child(
+                img(preview.image.clone()).w_full().h_full(),
+            );
+        } else if let Some(thumb) = document.cached_page(i, ScaleType::Thumb) {
+            page_outer = page_outer.child(
+                img(thumb.image.clone()).w_full().h_full(),
+            );
+        } else {
+            page_outer = page_outer.child(
+                div()
+                    .w_full()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(styles::TEXT_SECONDARY)
+                    .text_sm()
+                    .child(format!("Page {}", i + 1)),
+            );
+        }
+
+        container = container.child(page_outer);
     }
 
-    body
+    container
 }
