@@ -28,6 +28,7 @@ pub struct PdfReader {
     pub outline_collapsed: HashSet<Vec<usize>>,
     pub scroll_handle: ScrollHandle,        // reader body scroll
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
+    skip_sync: bool,                         // skip one frame after programmatic scroll
     render_queue: VecDeque<(usize, ScaleType)>,
 }
 
@@ -43,6 +44,7 @@ impl PdfReader {
             outline_collapsed: HashSet::new(),
             scroll_handle: ScrollHandle::new(),
             sidebar_scroll_handle: ScrollHandle::new(),
+            skip_sync: false,
             render_queue: VecDeque::new(),
         };
 
@@ -94,8 +96,9 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
+        self.skip_sync = true;
         self.scroll_handle.scroll_to_top_of_item(page_index);
-        // Sidebar scroll handled by sync_sidebar_from_scroll (next frame)
+        self.sidebar_scroll_handle.scroll_to_top_of_item(page_index);
         self.rebuild_render_queue();
         cx.notify();
     }
@@ -103,7 +106,9 @@ impl PdfReader {
     fn previous_page(&mut self, cx: &mut Context<Self>) {
         if self.current_page > 0 {
             self.current_page -= 1;
+            self.skip_sync = true;
             self.scroll_handle.scroll_to_top_of_item(self.current_page);
+            self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
             self.rebuild_render_queue();
             cx.notify();
         }
@@ -113,7 +118,9 @@ impl PdfReader {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
+                self.skip_sync = true;
                 self.scroll_handle.scroll_to_top_of_item(self.current_page);
+                self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
                 self.rebuild_render_queue();
                 cx.notify();
             }
@@ -208,18 +215,23 @@ impl PdfReader {
 }
 
 impl PdfReader {
-    /// Every frame: reads reader scroll position → updates current_page → syncs sidebar scroll
+    /// Every frame: syncs current_page + sidebar scroll from reader scroll position.
+    /// Skips one frame after programmatic scroll (select_page/nav) to avoid stale top_item().
     fn sync_sidebar_from_scroll(&mut self) {
         let Some(document) = &self.document else { return };
         if !document.initialized { return; }
 
+        // Skip one frame after programmatic scroll — prepaint hasn't processed it yet
+        if self.skip_sync {
+            self.skip_sync = false;
+            return;
+        }
+
         let top = self.scroll_handle.top_item();
         if top < document.page_count && top != self.current_page {
             self.current_page = top;
+            self.sidebar_scroll_handle.scroll_to_top_of_item(top);
         }
-
-        // Always scroll sidebar to current page (harmless if already at correct position)
-        self.sidebar_scroll_handle.scroll_to_top_of_item(self.current_page);
     }
 }
 
