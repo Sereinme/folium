@@ -179,7 +179,20 @@ impl PdfReader {
         let cur = self.current_page;
         let max = document.page_count;
 
-        for radius in 0..=RENDER_FULL_RADIUS {
+        // radius=0: only the current page (avoid pushing it twice)
+        if cur < max {
+            if !document.is_cached(cur, ScaleType::Preview) {
+                self.render_queue.push_back((cur, ScaleType::Preview));
+            }
+            if !document.is_cached(cur, ScaleType::Thumb) {
+                self.render_queue.push_back((cur, ScaleType::Thumb));
+            }
+            if !document.is_cached(cur, ScaleType::Full) {
+                self.render_queue.push_back((cur, ScaleType::Full));
+            }
+        }
+
+        for radius in 1..=RENDER_FULL_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
                 if !document.is_cached(i, ScaleType::Preview) {

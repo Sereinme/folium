@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -9,7 +10,7 @@ use rayon::prelude::*;
 use crate::pdf::outline::parse_outline;
 use crate::types::{OutlineItem, ScaleType};
 
-// ── LRU DisplayList cache ─────────────────────────────────────────────
+// ── LRU DisplayList cache (used for serial, single-item renders) ──────
 
 const DL_CACHE_MAX: usize = 20;
 
@@ -68,8 +69,7 @@ pub enum ToMain {
 
 // ── RenderHandle ───────────────────────────────────────────────────────
 
-/// Max batch size for parallel rendering. Below this threshold, render sequentially.
-const PARALLEL_BATCH_MIN: usize = 2;
+const PARALLEL_BATCH_MIN: usize = 3;
 
 pub struct RenderHandle {
     cmd_tx: Sender<Cmd>,
@@ -125,8 +125,23 @@ impl RenderHandle {
                     page_index,
                     scale,
                 } => {
-                    // Collect a batch of render requests (non-blocking drain)
-                    let mut batch = vec![(_id, page_index, scale)];
+                    // Render the first item immediately — minimizes
+                    // latency from "open" to first visible page.
+                    {
+                        let dl = dls.get_or_create(page_index, || {
+                            Self::load_display_list(&doc, page_index)
+                        });
+                        let result = Self::render_from_dl(dl, scale);
+                        let _ = result_tx.send(ToMain::Done {
+                            _id,
+                            page_index,
+                            scale,
+                            result,
+                        });
+                    }
+
+                    // Collect remaining commands for parallel batch
+                    let mut batch: Vec<(u64, usize, ScaleType)> = Vec::new();
                     while let Ok(cmd) = cmd_rx.try_recv() {
                         match cmd {
                             Cmd::Render {
@@ -137,42 +152,57 @@ impl RenderHandle {
                                 batch.push((_id, page_index, scale));
                             }
                             Cmd::Shutdown => {
-                                Self::process_batch(&doc, &mut dls, &batch, &result_tx);
+                                if !batch.is_empty() {
+                                    Self::process_batch(&doc, &batch, &result_tx);
+                                }
                                 return;
                             }
                         }
                     }
 
-                    Self::process_batch(&doc, &mut dls, &batch, &result_tx);
+                    if !batch.is_empty() {
+                        Self::process_batch(&doc, &batch, &result_tx);
+                    }
                 }
                 Cmd::Shutdown => break,
             }
         }
     }
 
+    /// Load a DisplayList for the given page. Extracted so both the
+    /// immediate-render path and the serial fallback can use it.
+    fn load_display_list(doc: &Document, page_index: usize) -> DisplayList {
+        doc.load_page(page_index as i32)
+            .ok()
+            .and_then(|p| p.to_display_list(false).ok())
+            .expect("mupdf: failed to create DisplayList")
+    }
+
     fn process_batch(
         doc: &Document,
-        dls: &mut DlCache,
         batch: &[(u64, usize, ScaleType)],
         result_tx: &Sender<ToMain>,
     ) {
         if batch.len() >= PARALLEL_BATCH_MIN {
-            // Parallel path: create fresh DisplayLists in a temporary Vec.
-            // We can't use the LRU cache here because eviction would drop
-            // DisplayLists that other threads are holding raw pointers to.
-            let dls_vec: Vec<DisplayList> = batch
+            // ── Parallel path ──────────────────────────────────────
+            // Deduplicate: multiple scales for the same page share one DL.
+            let mut dl_map: HashMap<usize, DisplayList> = HashMap::new();
+            for (_, page_index, _) in batch {
+                if !dl_map.contains_key(page_index) {
+                    let dl = Self::load_display_list(doc, *page_index);
+                    dl_map.insert(*page_index, dl);
+                }
+            }
+
+            // Build a per-entry reference list matching batch order
+            let dl_refs: Vec<&DisplayList> = batch
                 .iter()
-                .map(|(_, page_index, _)| {
-                    doc.load_page(*page_index as i32)
-                        .ok()
-                        .and_then(|p| p.to_display_list(false).ok())
-                        .expect("mupdf: failed to create DisplayList")
-                })
+                .map(|(_, page_index, _)| dl_map.get(page_index).unwrap())
                 .collect();
 
             let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32)>)> = batch
                 .par_iter()
-                .zip(dls_vec.par_iter())
+                .zip(dl_refs.par_iter())
                 .map(|((_id, page_index, scale), dl)| {
                     let result = Self::render_from_dl(dl, *scale);
                     (*_id, *page_index, *scale, result)
@@ -188,15 +218,11 @@ impl RenderHandle {
                 });
             }
         } else {
-            // Serial path: use the LRU cache for DisplayList reuse
+            // ── Serial path (1–2 items) ───────────────────────────
+            // Create DLs fresh — too few items to warrant dedup overhead.
             for (_id, page_index, scale) in batch {
-                let dl = dls.get_or_create(*page_index, || {
-                    doc.load_page(*page_index as i32)
-                        .ok()
-                        .and_then(|p| p.to_display_list(false).ok())
-                        .expect("mupdf: failed to create DisplayList")
-                });
-                let result = Self::render_from_dl(dl, *scale);
+                let dl = Self::load_display_list(doc, *page_index);
+                let result = Self::render_from_dl(&dl, *scale);
                 let _ = result_tx.send(ToMain::Done {
                     _id: *_id,
                     page_index: *page_index,
