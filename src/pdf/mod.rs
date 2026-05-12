@@ -12,8 +12,13 @@ use smallvec::SmallVec;
 use crate::render_queue::{RenderHandle, ToMain};
 use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 
-/// How many pages around the current page to keep Preview renders cached.
-const PREVIEW_CACHE_RADIUS: usize = 5;
+/// Keep Full (2×) renders within ±N pages of the current page.
+/// Beyond this radius, Full renders are dropped — the page falls back to
+/// Preview (1×) or is re-rendered on demand.
+const FULL_CACHE_RADIUS: usize = 5;
+
+/// Keep Preview (1×) renders within ±N pages.
+const PREVIEW_CACHE_RADIUS: usize = 10;
 
 pub struct PdfDocument {
     pub path: PathBuf,
@@ -137,11 +142,21 @@ impl PdfDocument {
         }
     }
 
-    /// Evict previews that are too far from the current page.
-    pub fn evict_distant_previews(&mut self, current_page: usize) {
+    /// Drop cached renders that are too far from the current page.
+    /// Full (2×, 8 MB/page) is the dominant memory consumer, so its radius is tight.
+    /// Preview (1×, 2 MB/page) has a wider radius for smooth nearby scrolling.
+    /// Thumbnails (0.25×, 0.12 MB/page) are never evicted — they're negligible.
+    pub fn evict_distant(&mut self, current_page: usize) {
         let cur = current_page as isize;
+
+        for (i, slot) in self.pages.iter_mut().enumerate() {
+            if (i as isize - cur).unsigned_abs() > FULL_CACHE_RADIUS {
+                *slot = None;
+            }
+        }
+
         self.previews.retain(|&idx, _| {
-            (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS
+            (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS as usize
         });
     }
 
@@ -150,7 +165,7 @@ impl PdfDocument {
         self.page_dims
             .get(page_index)
             .and_then(|d| *d)
-            .unwrap_or((595.0, 842.0)) // A4 fallback
+            .unwrap_or((595.0, 842.0))
     }
 }
 

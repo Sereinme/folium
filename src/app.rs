@@ -17,7 +17,9 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-const RENDER_FULL_RADIUS: usize = 30;
+/// Render Full (2×) for pages within this radius. Slightly larger than
+/// FULL_CACHE_RADIUS so pages are pre-rendered before the user scrolls to them.
+const RENDER_FULL_RADIUS: usize = 8;
 const RENDER_THUMB_RADIUS: usize = 80;
 
 pub struct PdfReader {
@@ -106,7 +108,7 @@ impl PdfReader {
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
         if let Some(doc) = &mut self.document {
-            doc.evict_distant_previews(page_index);
+            doc.evict_distant(page_index);
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
@@ -157,7 +159,7 @@ impl PdfReader {
         let new_page = (self.scroll_offset / step).round() as usize;
         if new_page < doc.page_count && new_page != self.current_page {
             self.current_page = new_page;
-            doc.evict_distant_previews(new_page);
+            doc.evict_distant(new_page);
             self.sidebar_scroll_handle.scroll_to_item(new_page);
         }
     }
