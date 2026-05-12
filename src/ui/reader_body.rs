@@ -28,10 +28,11 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
     let max_off = ((max_page as f32 * step) - 800.0).max(0.0);
     pdfr.scroll_offset = pdfr.scroll_offset.clamp(0.0, max_off);
 
-    // Update current_page from scroll offset
+    // Update current_page from scroll offset, sync sidebar
     let new_page = (pdfr.scroll_offset / step).round() as usize;
     if new_page < max_page && new_page != pdfr.current_page {
         pdfr.current_page = new_page;
+        pdfr.sidebar_scroll_handle.scroll_to_item(new_page);
     }
 
     // Fixed viewport with overflow_hidden — inner content shifted by scroll_offset
