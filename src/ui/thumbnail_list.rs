@@ -1,6 +1,6 @@
 use gpui::{
-    div, img, px, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
-    StyledImage,
+    div, img, px, AnyElement, Context, ElementId, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Styled, StyledImage,
 };
 use gpui_component::scroll::ScrollableElement;
 
@@ -9,8 +9,31 @@ use crate::PdfReader;
 
 use super::styles;
 
-pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl IntoElement {
+/// Thumbnail window: pages before/after current_page shown in sidebar
+const THUMB_RADIUS: usize = 30;
+
+pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElement {
+    let Some(document) = &mut pdfr.document else {
+        return div()
+            .overflow_y_scrollbar()
+            .h_full()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(empty_sidebar())
+            .into_any_element();
+    };
+
+    // Element ID encodes current_page → fresh scroll state on navigate
+    // makes current_page thumbnail visible at the window's center
+    let scroll_id = ElementId::named_usize("thumb-scroll", pdfr.current_page);
+    let cur = pdfr.current_page;
+    let start = cur.saturating_sub(THUMB_RADIUS);
+    let end = (cur + THUMB_RADIUS + 1).min(document.page_count);
+
     let mut list = div()
+        .id(scroll_id)
         .overflow_y_scrollbar()
         .h_full()
         .p_2()
@@ -18,12 +41,8 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl
         .flex_col()
         .gap_2();
 
-    let Some(document) = &mut pdfr.document else {
-        return list.child(empty_sidebar());
-    };
-
-    for page_index in 0..document.page_count {
-        let selected = pdfr.current_page == page_index;
+    for page_index in start..end {
+        let selected = cur == page_index;
 
         let mut item = div()
             .p_2()
@@ -75,7 +94,7 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl
         list = list.child(item);
     }
 
-    list
+    list.into_any_element()
 }
 
 fn empty_sidebar() -> impl IntoElement {

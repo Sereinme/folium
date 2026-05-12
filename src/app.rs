@@ -96,25 +96,39 @@ impl PdfReader {
     }
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
-        self.window_start = page_index;
+        // Window centered on selected page with back buffer for scroll
+        let back = 10;
+        self.window_start = page_index.saturating_sub(back);
         self.current_page = page_index;
-        self.wheel_accumulator = 0.0;
+        self.wheel_accumulator = (page_index - self.window_start) as f32 * 1220.0;
         self.rebuild_render_queue();
         cx.notify();
     }
 
     fn previous_page(&mut self, cx: &mut Context<Self>) {
-        if self.current_page > 0 {
+        if self.current_page > self.window_start {
+            // Still within window — just move current_page
             self.current_page -= 1;
-            self.rebuild_render_queue();
-            cx.notify();
+            self.wheel_accumulator = self.wheel_accumulator - 1220.0;
+            if self.wheel_accumulator < 0.0 {
+                self.wheel_accumulator = 0.0;
+            }
+        } else if self.current_page > 0 {
+            // At window edge — rebuild window centered on new page
+            let new = self.current_page - 1;
+            self.window_start = new.saturating_sub(10);
+            self.current_page = new;
+            self.wheel_accumulator = (self.current_page - self.window_start) as f32 * 1220.0;
         }
+        self.rebuild_render_queue();
+        cx.notify();
     }
 
     fn next_page(&mut self, cx: &mut Context<Self>) {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
+                self.wheel_accumulator += 1220.0;
                 self.rebuild_render_queue();
                 cx.notify();
             }
