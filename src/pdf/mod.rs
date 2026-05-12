@@ -78,11 +78,9 @@ impl PdfDocument {
                         continue;
                     }
                     match result {
-                        Ok((samples, width, height)) => {
+                        Ok((samples, width, height, natural_w, natural_h)) => {
                             if self.page_dims[page_index].is_none() {
-                                let s = scale.scale_value();
-                                self.page_dims[page_index] =
-                                    Some((width as f32 / s, height as f32 / s));
+                                self.page_dims[page_index] = Some((natural_w, natural_h));
                             }
 
                             let image = build_page_image(samples, width, height);

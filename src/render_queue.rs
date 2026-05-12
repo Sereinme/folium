@@ -63,7 +63,8 @@ pub enum ToMain {
         _id: u64,
         page_index: usize,
         scale: ScaleType,
-        result: Result<(Vec<u8>, u32, u32)>,
+        /// (samples, pixel_w, pixel_h, natural_w, natural_h)
+        result: Result<(Vec<u8>, u32, u32, f32, f32)>,
     },
 }
 
@@ -200,14 +201,15 @@ impl RenderHandle {
                 .map(|(_, page_index, _)| dl_map.get(page_index).unwrap())
                 .collect();
 
-            let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32)>)> = batch
-                .par_iter()
-                .zip(dl_refs.par_iter())
-                .map(|((_id, page_index, scale), dl)| {
-                    let result = Self::render_from_dl(dl, *scale);
-                    (*_id, *page_index, *scale, result)
-                })
-                .collect();
+            let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32, f32, f32)>)> =
+                batch
+                    .par_iter()
+                    .zip(dl_refs.par_iter())
+                    .map(|((_id, page_index, scale), dl)| {
+                        let result = Self::render_from_dl(dl, *scale);
+                        (*_id, *page_index, *scale, result)
+                    })
+                    .collect();
 
             for (_id, page_index, scale, result) in results {
                 let _ = result_tx.send(ToMain::Done {
@@ -233,9 +235,38 @@ impl RenderHandle {
         }
     }
 
-    fn render_from_dl(dl: &DisplayList, scale_type: ScaleType) -> Result<(Vec<u8>, u32, u32)> {
-        let scale = scale_type.scale_value();
-        let ctm = Matrix::new_scale(scale, scale);
+    /// Cap output pixel dimensions per scale type so that pages with very
+    /// large natural dimensions (posters, high-res images) don't consume
+    /// hundreds of MB per page. Normal A4 pages are unaffected — their
+    /// natural dimensions × scale stay below the cap.
+    fn max_pixel_dim(scale_type: ScaleType) -> f32 {
+        match scale_type {
+            ScaleType::Full => 2400.0,   // retina viewport (~1200 px × 2)
+            ScaleType::Preview => 1200.0, // standard viewport (~820 px × 1.5)
+            ScaleType::Thumb => 300.0,    // sidebar thumbnail width
+        }
+    }
+
+    fn render_from_dl(
+        dl: &DisplayList,
+        scale_type: ScaleType,
+    ) -> Result<(Vec<u8>, u32, u32, f32, f32)> {
+        let requested_scale = scale_type.scale_value();
+        let bounds = dl.bounds();
+        let natural_w = (bounds.x1 - bounds.x0).abs() as f32;
+        let natural_h = (bounds.y1 - bounds.y0).abs() as f32;
+        let max_natural = natural_w.max(natural_h);
+
+        // Cap the effective scale so the longest side ≤ max_pixel_dim px.
+        // For normal A4 pages (595 pt) at Full (2×): 595 × 2 = 1190 px —
+        // well below the 2400 px cap, so the scale is unchanged.
+        let effective_scale = if max_natural > 0.0 {
+            (Self::max_pixel_dim(scale_type) / max_natural).min(requested_scale)
+        } else {
+            requested_scale
+        };
+
+        let ctm = Matrix::new_scale(effective_scale, effective_scale);
         let pixmap = dl
             .to_pixmap(&ctm, &Colorspace::device_rgb(), true)
             .map_err(|e| anyhow!("mupdf to_pixmap: {e}"))?;
@@ -244,7 +275,7 @@ impl RenderHandle {
         let height = pixmap.height();
         let samples = pixmap.samples().to_vec();
 
-        Ok((samples, width, height))
+        Ok((samples, width, height, natural_w, natural_h))
     }
 
     pub fn submit(&mut self, page_index: usize, scale: ScaleType) {
