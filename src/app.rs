@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use gpui::{
     div, px, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render, ScrollHandle,
@@ -30,6 +31,8 @@ pub struct PdfReader {
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
+    pump_active: bool,
+    render_gen: usize,
 }
 
 impl PdfReader {
@@ -46,16 +49,18 @@ impl PdfReader {
             sidebar_scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
             render_stamp: 0,
+            pump_active: false,
+            render_gen: 0,
         };
 
         if let Some(path) = initial_path {
-            this.load_pdf(path);
+            this.load_pdf(path, cx);
         }
 
         this
     }
 
-    pub fn load_pdf(&mut self, path: PathBuf) {
+    pub fn load_pdf(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         match PdfDocument::open(path) {
             Ok(document) => {
                 self.current_page = 0;
@@ -63,12 +68,16 @@ impl PdfReader {
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.render_queue.clear();
+                self.pump_active = false;
+                self.render_gen = self.render_gen.wrapping_add(1);
                 self.document = Some(document);
+                cx.notify();
             }
             Err(error) => {
                 self.document = None;
                 self.current_page = 0;
                 self.status = Some(error.to_string());
+                cx.notify();
             }
         }
     }
@@ -85,8 +94,7 @@ impl PdfReader {
             if let Ok(Ok(Some(paths))) = receiver.await {
                 if let Some(path) = paths.into_iter().next() {
                     this.update(cx, |this, cx| {
-                        this.load_pdf(path);
-                        cx.notify();
+                        this.load_pdf(path, cx);
                     })?;
                 }
             }
@@ -97,7 +105,6 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
-        // Compute scroll offset from page dims
         if let Some(doc) = &self.document {
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
@@ -173,7 +180,6 @@ impl PdfReader {
         for radius in 0..=RENDER_FULL_RADIUS {
             for &i in &[cur.wrapping_sub(radius), cur + radius] {
                 if i >= max { continue; }
-                // Preview first (fast readable), then Thumb (sidebar), then Full (crisp)
                 self.render_queue.push_back((i, ScaleType::Preview));
                 if !document.is_cached(i, ScaleType::Thumb) {
                     self.render_queue.push_back((i, ScaleType::Thumb));
@@ -232,22 +238,67 @@ impl PdfReader {
         }
         changed || submitted
     }
+
+    /// Returns true if the render pump should keep running.
+    fn needs_pump(&self) -> bool {
+        self.document.as_ref().is_some_and(|d| !d.initialized || d.inflight > 0)
+    }
+
+    fn ensure_pump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pump_active {
+            return;
+        }
+        let needs = self.needs_pump();
+        if !needs {
+            return;
+        }
+
+        self.pump_active = true;
+        let generation = self.render_gen;
+
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(32))
+                    .await;
+
+                let keep_going = this.update(cx, |this, cx| {
+                    if this.render_gen != generation {
+                        return false;
+                    }
+                    let changed = this.poll_and_submit();
+                    if changed {
+                        cx.notify();
+                    }
+                    this.needs_pump()
+                })?;
+
+                if !keep_going {
+                    break;
+                }
+            }
+
+            this.update(cx, |this, _| {
+                if this.render_gen == generation {
+                    this.pump_active = false;
+                }
+            })?;
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach();
+    }
 }
 
 impl Render for PdfReader {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let changed = self.poll_and_submit();
 
-        // Force continuous frames while any page is being rendered
-        let needs_render = self.document.as_ref().is_some_and(|d| {
-            if !d.initialized { return true; }
-            d.inflight > 0
-        });
-
-        if changed || needs_render {
-            cx.notify();
+        // Start or restart the pump when there's pending work (load / render)
+        if changed || self.needs_pump() {
+            self.ensure_pump(window, cx);
         }
 
         let title = self
