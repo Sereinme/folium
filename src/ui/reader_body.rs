@@ -1,8 +1,8 @@
 use gpui::{
-    div, img, px, AnyElement, Context, IntoElement, ParentElement, Styled,
+    div, img, px, AnyElement, Context, ElementId, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled,
 };
 use gpui_component::button::ButtonVariants;
-use gpui_component::scroll::ScrollableElement;
 
 use crate::types::ScaleType;
 use crate::PdfReader;
@@ -18,17 +18,18 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         return no_pdf_view(cx);
     };
 
-    // All pages share the same display dimensions (based on first known page)
     let (nw, nh) = document.page_dim(pdfr.current_page);
     let aspect = if nw > 0.0 { nh / nw } else { DEFAULT_ASPECT };
     let page_w = MAX_PAGE_W.min(nw.max(595.0));
     let page_h = page_w * aspect;
 
-    // Scrollable frame — always the same element, all pages inside
+    // Scrollable container with ScrollHandle for programmatic scrolling
     let mut frame = div()
+        .id(ElementId::named_usize("reader-body-scroll", 0))
+        .track_scroll(&pdfr.scroll_handle)
+        .overflow_y_scroll()
         .flex_1()
         .h_full()
-        .overflow_y_scrollbar()
         .bg(styles::BG_READER)
         .p_6()
         .flex()
@@ -51,7 +52,6 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         return frame.into_any_element();
     }
 
-    // Render ALL pages — GPUI clips overflow, user scrolls freely
     for i in 0..document.page_count {
         let display_h = page_h;
         let is_current = i == pdfr.current_page;

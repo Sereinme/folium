@@ -2,8 +2,8 @@ use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 
 use gpui::{
-    div, px, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render, SharedString,
-    Styled, Window,
+    div, px, Context, Entity, IntoElement, ParentElement, PathPromptOptions, Render, ScrollHandle,
+    SharedString, Styled, Window,
 };
 use gpui::prelude::FluentBuilder;
 use gpui_component::{
@@ -26,6 +26,7 @@ pub struct PdfReader {
     pub status: Option<String>,
     pub app_menu_bar: Entity<AppMenuBar>,
     pub outline_collapsed: HashSet<Vec<usize>>,
+    pub scroll_handle: ScrollHandle,
     render_queue: VecDeque<(usize, ScaleType)>,
 }
 
@@ -39,6 +40,7 @@ impl PdfReader {
             status: None,
             app_menu_bar,
             outline_collapsed: HashSet::new(),
+            scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
         };
 
@@ -90,6 +92,7 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
+        self.scroll_handle.scroll_to_top_of_item(page_index);
         self.rebuild_render_queue();
         cx.notify();
     }
