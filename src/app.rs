@@ -137,6 +137,20 @@ impl PdfReader {
         }
     }
 
+    /// Sync current_page from scroll_offset (called before UI build)
+    pub fn sync_current_page(&mut self) {
+        let Some(doc) = &self.document else { return };
+        if !doc.initialized { return; }
+        let (nw, nh) = doc.page_dim(self.current_page.max(1) - 1);
+        let a = if nw > 0.0 { nh / nw } else { 1.414 };
+        let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
+        let new_page = (self.scroll_offset / step).round() as usize;
+        if new_page < doc.page_count && new_page != self.current_page {
+            self.current_page = new_page;
+            self.sidebar_scroll_handle.scroll_to_item(new_page);
+        }
+    }
+
     pub fn toggle_outline_item(&mut self, path: Vec<usize>, cx: &mut Context<Self>) {
         if self.outline_collapsed.contains(&path) {
             self.outline_collapsed.remove(&path);
@@ -227,6 +241,7 @@ impl PdfReader {
 
 impl Render for PdfReader {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_current_page();
         let needs_refresh = self.poll_and_submit();
 
         if needs_refresh
