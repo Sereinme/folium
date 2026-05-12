@@ -245,12 +245,17 @@ impl Render for PdfReader {
         self.sync_current_page();
         let needs_refresh = self.poll_and_submit();
 
-        if needs_refresh
-            || self.document.as_ref().is_some_and(|d| {
-                if !d.initialized { return true; }
-                d.inflight > 0
-            })
-        {
+        // Keep rendering loop alive while there's any work to do
+        let keep_looping = self.document.as_ref().is_some_and(|d| {
+            if !d.initialized { return true; }
+            d.inflight > 0
+                || (0..d.page_count.min(50)).any(|i| {
+                    !d.is_cached(i, ScaleType::Full)
+                        && !d.is_cached(i, ScaleType::Preview)
+                })
+        });
+
+        if needs_refresh || keep_looping {
             cx.notify();
         }
 
