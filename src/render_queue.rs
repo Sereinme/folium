@@ -156,33 +156,24 @@ impl RenderHandle {
         batch: &[(u64, usize, ScaleType)],
         result_tx: &Sender<ToMain>,
     ) {
-        // Pre-create all DisplayLists, keeping raw pointers (DisplayList is Sync).
-        // dls is not mutated during the parallel section that follows.
-        struct DlPtr(*const DisplayList);
-        // SAFETY: DisplayList is Sync and the pointers are valid for the
-        // duration of this function call (dls is not mutated after this point).
-        unsafe impl Send for DlPtr {}
-        unsafe impl Sync for DlPtr {}
-
-        let dl_ptrs: Vec<DlPtr> = batch
-            .iter()
-            .map(|(_, page_index, _)| {
-                let dl = dls.get_or_create(*page_index, || {
+        if batch.len() >= PARALLEL_BATCH_MIN {
+            // Parallel path: create fresh DisplayLists in a temporary Vec.
+            // We can't use the LRU cache here because eviction would drop
+            // DisplayLists that other threads are holding raw pointers to.
+            let dls_vec: Vec<DisplayList> = batch
+                .iter()
+                .map(|(_, page_index, _)| {
                     doc.load_page(*page_index as i32)
                         .ok()
                         .and_then(|p| p.to_display_list(false).ok())
                         .expect("mupdf: failed to create DisplayList")
-                });
-                DlPtr(dl as *const DisplayList)
-            })
-            .collect();
+                })
+                .collect();
 
-        if batch.len() >= PARALLEL_BATCH_MIN {
             let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32)>)> = batch
                 .par_iter()
-                .zip(dl_ptrs.par_iter())
-                .map(|((_id, page_index, scale), dl_ptr)| {
-                    let dl = unsafe { &*dl_ptr.0 };
+                .zip(dls_vec.par_iter())
+                .map(|((_id, page_index, scale), dl)| {
                     let result = Self::render_from_dl(dl, *scale);
                     (*_id, *page_index, *scale, result)
                 })
@@ -197,8 +188,14 @@ impl RenderHandle {
                 });
             }
         } else {
-            for (i, (_id, page_index, scale)) in batch.iter().enumerate() {
-                let dl = unsafe { &*dl_ptrs[i].0 };
+            // Serial path: use the LRU cache for DisplayList reuse
+            for (_id, page_index, scale) in batch {
+                let dl = dls.get_or_create(*page_index, || {
+                    doc.load_page(*page_index as i32)
+                        .ok()
+                        .and_then(|p| p.to_display_list(false).ok())
+                        .expect("mupdf: failed to create DisplayList")
+                });
                 let result = Self::render_from_dl(dl, *scale);
                 let _ = result_tx.send(ToMain::Done {
                     _id: *_id,
