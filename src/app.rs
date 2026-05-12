@@ -219,23 +219,15 @@ impl PdfReader {
 
         let batch: Vec<_> = self.render_queue.drain(..).collect();
         let mut submitted = false;
-        let mut remaining = Vec::new();
         if let Some(document) = &mut self.document {
-            for item in batch {
-                if !document.can_render() {
-                    remaining.push(item);
+            for (idx, scale) in batch {
+                if document.is_cached(idx, scale) && scale != ScaleType::Preview {
                     continue;
                 }
-                let (idx, scale) = item;
-                if !document.is_cached(idx, scale) {
-                    document.request_render(idx, scale);
-                    submitted = true;
-                }
+                document.request_render(idx, scale);
+                submitted = true;
             }
-        } else {
-            remaining = batch;
         }
-        self.render_queue.extend(remaining);
         changed || submitted
     }
 }

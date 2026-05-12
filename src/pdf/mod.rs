@@ -102,10 +102,6 @@ impl PdfDocument {
         changed
     }
 
-    pub fn can_render(&self) -> bool {
-        self.inflight < 50
-    }
-
     pub fn request_render(&mut self, page_index: usize, scale: ScaleType) {
         if !self.initialized || page_index >= self.page_count {
             return;
