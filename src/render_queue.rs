@@ -20,16 +20,14 @@ fn raw_context() -> *mut mupdf_sys::fz_context {
     raw
 }
 
-/// Shrink the shared mupdf store to 20% of its current size.
-/// Called after DL cache is cleared so no DisplayList references
-/// are pinning store objects.
+/// Shrink the shared mupdf store to 5% of its current size.
 fn shrink_mupdf_store() {
-    unsafe { mupdf_sys::fz_shrink_store(raw_context(), 20) };
+    unsafe { mupdf_sys::fz_shrink_store(raw_context(), 5) };
 }
 
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
 
-const DL_CACHE_MAX: usize = 5;
+const DL_CACHE_MAX: usize = 1;
 
 struct DlCache(Vec<(usize, DisplayList)>);
 

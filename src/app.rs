@@ -17,10 +17,11 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-/// Render Full (2×) for pages within this radius. Slightly larger than
-/// FULL_CACHE_RADIUS so pages are pre-rendered before the user scrolls to them.
-const RENDER_FULL_RADIUS: usize = 8;
-const RENDER_THUMB_RADIUS: usize = 80;
+/// Render Full (2×) only for the current page and its immediate neighbours.
+/// SumatraPDF-style: discard when out of view, re-render on scroll-back.
+const RENDER_FULL_RADIUS: usize = 1;
+/// Only pre-render thumbnails for a few nearby pages.
+const RENDER_THUMB_RADIUS: usize = 5;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
