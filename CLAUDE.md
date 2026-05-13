@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session Hygiene
+
+- Commit at least every 30 minutes of active development. Long sessions without commits risk catastrophic work loss and make regression isolation harder.
+- After fixing a bug, add a regression test that reproduces the exact failure before moving on.
+- When performance tuning, keep a log (in the commit message or a `PERF_NOTES.md`) of what was tried, what worked, and what didn't.
+
 ## Build & Run
 
 ```bash
@@ -31,9 +37,9 @@ Pages are rendered on a **dedicated background thread** (`pdf-render`, see `src/
 | `Full` | 2.0× | Crisp final quality |
 | `Thumb` | 0.25× | Sidebar thumbnail strip |
 
-`Preview` is never cached across frames (`is_cached(Preview)` always returns `false`), so it re-renders each time the current page changes. This avoids stale low-res images while the 2× render completes.
+`Preview` renders are cached per-page within a ±10 page radius (`PREVIEW_CACHE_RADIUS`). Full renders are cached within ±5 pages and evicted on navigation. Thumbnails are never evicted (negligible size).
 
-mupdf `DisplayList` objects are cached in an LRU pool (max 20) to avoid re-parsing pages on re-render.
+mupdf `DisplayList` objects are cached in an LRU pool (max 5) for the serial render path. The parallel path creates DLs in a temporary `HashMap` with page-level deduplication to avoid re-parsing the same page for multiple scale tiers.
 
 ### Render pump (app.rs)
 
@@ -45,7 +51,7 @@ The rendering loop is driven by an async **pump task** (`ensure_pump`), not by `
 4. The pump exits when the document is fully initialized and `inflight == 0`
 5. A `render_gen` counter prevents stale pumps from a previous document from interfering with a new one
 
-`poll_and_submit` uses an expanding-ring strategy: current page ±30 pages get Preview → Thumb → Full; ±80 pages get Thumb only.
+`poll_and_submit` uses an expanding-ring strategy: current page ±8 pages get Preview → Thumb → Full; ±80 pages get Thumb only. Full renders at 2× are capped at 2400 px on the longest side to prevent huge-image pages from consuming hundreds of MB. After each batch render, `fz_shrink_store(ctx, 50)` is called to evict decoded image data from mupdf's internal store.
 
 ### GPUI repaint forcing
 
@@ -75,3 +81,18 @@ GPUI may skip repainting when it sees an identical element tree. `render_stamp` 
 | `image` 0.25.9 | `RgbaImage` pixel buffer → `RenderImage` conversion |
 | `smallvec` 1.15 | `SmallVec` for single-frame image storage |
 | `anyhow` 1.0 | Error propagation |
+| `rayon` 1.10 | Parallel rendering of DisplayList → Pixmap batches |
+| `mupdf-sys` 0.6.0 | Direct FFI for `fz_shrink_store` store management |
+
+## Rust-Specific Conventions
+
+- After any `unsafe` block or raw pointer manipulation, verify correctness with Miri (`cargo miri test`) before continuing. The `transmute_copy` in `shrink_mupdf_store()` and any `*const`/`*mut` casts must be validated.
+- When modifying rendering pipelines, validate output against reference images or baseline screenshots.
+- All performance-sensitive code paths should have benchmarks in `benches/` that can be run with `cargo bench`.
+
+## Performance Optimization Rules
+
+- Before starting any optimization, record current benchmarks (render time, memory usage).
+- After each optimization round, run the full test suite AND a visual smoke test before moving on.
+- Commit working state with benchmark notes before starting the next optimization iteration.
+- Never reduce visual fidelity (e.g., render scale) without verifying on both standard and retina/high-DPI displays. The `ScaleType::Full` multiplier (2.0) is calibrated for Retina displays — changing it requires testing at 1x, 2x, and 3x DPI.
