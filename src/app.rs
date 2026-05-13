@@ -169,7 +169,6 @@ impl PdfReader {
                 // current_page, recalculate scroll_offset.
                 self.scroll_offset = self.current_page as f32 * step;
             }
-            self.sidebar_scroll_handle.scroll_to_item(self.current_page);
         }
     }
 
@@ -262,8 +261,8 @@ impl PdfReader {
     pub fn render_sidebar_thumbnails(&mut self) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return };
-        const RANGE: usize = 200;
-        const MAX_PER_CALL: u8 = 12;
+        const RANGE: usize = 80;
+        const MAX_PER_CALL: u8 = 6;
         let center = (self.sidebar_scroll / 218.0) as usize;
         let start = center.saturating_sub(RANGE);
         let end = (center + RANGE).min(doc.page_count.saturating_sub(1));
