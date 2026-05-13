@@ -25,37 +25,6 @@ fn shrink_mupdf_store() {
     unsafe { mupdf_sys::fz_shrink_store(raw_context(), 5) };
 }
 
-// ── LRU DisplayList cache (used for serial, single-item renders) ──────
-
-const DL_CACHE_MAX: usize = 1;
-
-struct DlCache(Vec<(usize, DisplayList)>);
-
-impl DlCache {
-    fn new() -> Self {
-        Self(Vec::with_capacity(DL_CACHE_MAX))
-    }
-
-    fn get_or_create(
-        &mut self,
-        page_index: usize,
-        create: impl FnOnce() -> DisplayList,
-    ) -> &DisplayList {
-        if let Some(pos) = self.0.iter().position(|(idx, _)| *idx == page_index) {
-            let entry = self.0.remove(pos);
-            self.0.push(entry);
-            return &self.0.last().unwrap().1;
-        }
-
-        if self.0.len() >= DL_CACHE_MAX {
-            self.0.remove(0);
-        }
-
-        self.0.push((page_index, create()));
-        &self.0.last().unwrap().1
-    }
-}
-
 // ── Channels ───────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -111,8 +80,7 @@ impl RenderHandle {
     }
 
     fn render_thread(path: PathBuf, cmd_rx: Receiver<Cmd>, result_tx: Sender<ToMain>) {
-        let path_str = path.to_string_lossy();
-        let doc = match Document::open(&*path_str) {
+        let doc = match Document::open(path.as_path()) {
             Ok(d) => d,
             Err(_) => {
                 let _ = result_tx.send(ToMain::Init { page_count: 0 });
@@ -128,8 +96,6 @@ impl RenderHandle {
         let outline = parse_outline(&doc);
         let _ = result_tx.send(ToMain::Outline(outline));
 
-        let mut dls = DlCache::new();
-
         loop {
             let cmd = match cmd_rx.recv() {
                 Ok(cmd) => cmd,
@@ -142,13 +108,10 @@ impl RenderHandle {
                     page_index,
                     scale,
                 } => {
-                    // Render the first item immediately — minimizes
-                    // latency from "open" to first visible page.
+                    // Render the first item immediately
                     {
-                        let dl = dls.get_or_create(page_index, || {
-                            Self::load_display_list(&doc, page_index)
-                        });
-                        let result = Self::render_from_dl(dl, scale);
+                        let dl = Self::load_display_list(&doc, page_index);
+                        let result = Self::render_from_dl(&dl, scale);
                         let _ = result_tx.send(ToMain::Done {
                             _id,
                             page_index,
@@ -180,8 +143,6 @@ impl RenderHandle {
                     if !batch.is_empty() {
                         Self::process_batch(&doc, &batch, &result_tx);
                     }
-                    // Clear DL cache so store shrink can evict pinned objects
-                    dls.0.clear();
                     shrink_mupdf_store();
                 }
                 Cmd::Shutdown => break,

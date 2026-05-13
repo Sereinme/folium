@@ -302,12 +302,14 @@ impl PdfReader {
         self.document.as_ref().is_some_and(|d| !d.initialized || d.inflight > 0)
     }
 
-    /// Schedule a single re-render after a short delay. Used instead of a
-    /// long-running pump to avoid complex lifecycle bugs (pump restart loops).
+    /// Schedule a single re-render after a short delay. Uses 16 ms when
+    /// renders are in flight for responsiveness, 50 ms otherwise.
     fn schedule_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let inflight = self.document.as_ref().map_or(0, |d| d.inflight);
+        let delay = if inflight > 0 { 16 } else { 50 };
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(32))
+                .timer(Duration::from_millis(delay))
                 .await;
             let _ = this.update(cx, |_, cx| cx.notify());
             Ok::<_, anyhow::Error>(())
