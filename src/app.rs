@@ -115,8 +115,6 @@ impl PdfReader {
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
             self.scroll_offset = page_index as f32 * step;
         }
-        // Sync sidebar_scroll with the programmatic scroll
-        self.sidebar_scroll = page_index as f32 * 218.0;
         self.sidebar_scroll_handle.scroll_to_item(page_index);
         self.submit_renders();
         cx.notify();
@@ -131,7 +129,6 @@ impl PdfReader {
                 let a = if nw > 0.0 { nh / nw } else { 1.414 };
                 self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
             }
-            self.sidebar_scroll = self.current_page as f32 * 218.0;
             self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.submit_renders();
             cx.notify();
@@ -148,7 +145,6 @@ impl PdfReader {
                     let a = if nw > 0.0 { nh / nw } else { 1.414 };
                     self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
                 }
-                self.sidebar_scroll = self.current_page as f32 * 218.0;
                 self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.submit_renders();
                 cx.notify();
