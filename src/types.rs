@@ -8,7 +8,7 @@ pub enum SidebarTab {
     Outline,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScaleType {
     Full,
     Preview,

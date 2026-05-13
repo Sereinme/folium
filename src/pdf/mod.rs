@@ -1,6 +1,6 @@
 pub mod outline;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -30,6 +30,7 @@ pub struct PdfDocument {
     pub page_dims: Vec<Option<(f32, f32)>>,
     pub initialized: bool,
     pub inflight: usize,
+    submitted: HashSet<(usize, ScaleType)>,
     handle: RenderHandle,
 }
 
@@ -47,6 +48,7 @@ impl PdfDocument {
             page_dims: Vec::new(),
             initialized: false,
             inflight: 0,
+            submitted: HashSet::new(),
             handle,
         })
     }
@@ -74,6 +76,7 @@ impl PdfDocument {
                     ..
                 } => {
                     self.inflight = self.inflight.saturating_sub(1);
+                    self.submitted.remove(&(page_index, scale));
                     if page_index >= self.page_count {
                         continue;
                     }
@@ -112,6 +115,11 @@ impl PdfDocument {
             return;
         }
         if self.is_cached(page_index, scale) {
+            return;
+        }
+        // Don't submit duplicates — a render for this (page, scale) is
+        // already in flight.
+        if !self.submitted.insert((page_index, scale)) {
             return;
         }
         self.inflight += 1;

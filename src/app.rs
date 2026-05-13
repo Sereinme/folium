@@ -376,10 +376,12 @@ impl Render for PdfReader {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
-        let changed = self.poll_and_submit();
+        self.poll_and_submit();
 
-        // Start or restart the pump when there's pending work (load / render)
-        if changed || self.needs_pump() {
+        // Only restart the pump when there's real work to do (inflight > 0
+        // or not yet initialized). Don't restart just because a late render
+        // result arrived — that caused 40+ pump restarts and creeping RSS.
+        if self.needs_pump() {
             self.ensure_pump(window, cx);
         }
 
