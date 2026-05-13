@@ -233,27 +233,21 @@ impl PdfReader {
     }
 
     /// Submit thumbnail renders for pages visible in the sidebar viewport.
-    /// Called when the sidebar is scrolled independently of the main page.
     pub fn render_sidebar_thumbnails(&mut self, sidebar_height: f32) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return; }
+        // Thumbnail item height varies by page aspect ratio (120–280 px).
+        // Use a generous range to cover the estimate error.
         let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
-        let first = (self.sidebar_scroll / item_h).floor() as usize;
-        let last = ((self.sidebar_scroll + sidebar_height) / item_h).ceil() as usize;
-        let last = last.min(doc.page_count.saturating_sub(1));
-        let buffer = 5;
-        let start = first.saturating_sub(buffer);
-        let end = (last + buffer).min(doc.page_count.saturating_sub(1));
-        let inflight_before = doc.inflight;
+        let center = (self.sidebar_scroll / item_h).floor() as usize;
+        let visible = (sidebar_height / item_h).ceil() as usize + 1;
+        let buffer = visible + 30; // wide buffer for height variance
+        let start = center.saturating_sub(buffer);
+        let end = (center + buffer).min(doc.page_count.saturating_sub(1));
         for i in start..=end {
             if !doc.is_cached(i, ScaleType::Thumb) {
                 doc.request_render(i, ScaleType::Thumb);
             }
-        }
-        let new_submissions = doc.inflight.saturating_sub(inflight_before);
-        if new_submissions > 0 {
-            eprintln!("[sidebar] pg={} scroll={:.0} range={}-{} new={} inflight={}",
-                self.current_page, self.sidebar_scroll, start, end, new_submissions, doc.inflight);
         }
     }
 
