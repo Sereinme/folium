@@ -8,9 +8,6 @@ use crate::PdfReader;
 
 use super::styles;
 
-/// Estimate sidebar viewport height — window height minus titlebar.
-const SIDEBAR_VIEWPORT_H: f32 = 780.0;
-
 pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElement {
     let Some(document) = &mut pdfr.document else {
         return div()
@@ -29,9 +26,6 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
             .into_any_element();
     };
 
-    let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
-    let max_scroll = (document.page_count as f32 * item_h - SIDEBAR_VIEWPORT_H).max(0.0);
-
     let mut list = div()
         .id(ElementId::named_usize("sidebar-thumbnails", 0))
         .track_scroll(&pdfr.sidebar_scroll_handle)
@@ -41,19 +35,6 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
         .flex()
         .flex_col()
         .gap_2();
-
-    // Track sidebar scroll position and submit thumbnails for the visible
-    // range at each scroll tick (not deferred to render, which would miss
-    // intermediate positions during rapid scrolling).
-    list.interactivity().on_scroll_wheel(cx.listener(
-        move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
-            let px_delta = event.delta.pixel_delta(px(30.0));
-            let delta: f32 = f32::from(px_delta.y);
-            this.sidebar_scroll = (this.sidebar_scroll - delta).clamp(0.0, max_scroll);
-            this.render_sidebar_thumbnails(SIDEBAR_VIEWPORT_H);
-            cx.notify();
-        },
-    ));
 
     for page_index in 0..document.page_count {
         let selected = pdfr.current_page == page_index;

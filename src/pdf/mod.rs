@@ -144,10 +144,8 @@ impl PdfDocument {
         }
     }
 
-    /// Drop cached renders that are too far from BOTH the main page and
-    /// the sidebar viewport. Full/Preview only follow the main page.
-    /// Thumbnails follow both independently.
-    pub fn evict_distant(&mut self, current_page: usize, sidebar_scroll: f32) {
+    /// Drop cached renders that are too far from the current page.
+    pub fn evict_distant(&mut self, current_page: usize) {
         let cur = current_page as isize;
 
         for (i, slot) in self.pages.iter_mut().enumerate() {
@@ -160,16 +158,10 @@ impl PdfDocument {
             (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS as usize
         });
 
-        // Thumbnails: keep if near the main page OR near the sidebar viewport.
-        const THUMB_ITEM_H: f32 = 218.0;
-        const MAIN_THUMB_RADIUS: isize = 30;
-        const SIDEBAR_THUMB_RADIUS: isize = 25;
-        let sidebar_page = (sidebar_scroll / THUMB_ITEM_H) as isize;
+        // Thumbnails: keep near the current page.
+        const THUMB_CACHE_RADIUS: isize = 60;
         for (i, slot) in self.thumbnails.iter_mut().enumerate() {
-            let i_i = i as isize;
-            let near_main = (i_i - cur).unsigned_abs() <= MAIN_THUMB_RADIUS as usize;
-            let near_sidebar = (i_i - sidebar_page).unsigned_abs() <= SIDEBAR_THUMB_RADIUS as usize;
-            if !near_main && !near_sidebar {
+            if (i as isize - cur).unsigned_abs() > THUMB_CACHE_RADIUS as usize {
                 *slot = None;
             }
         }

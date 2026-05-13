@@ -19,9 +19,9 @@ use crate::ui::{self, styles};
 
 /// Render the current page ±1 at Full quality for smooth scrolling.
 const RENDER_FULL_RADIUS: usize = 1;
-/// Render thumbnails near the current page. The sidebar independently
-/// requests thumbnails for its visible viewport via render_sidebar_thumbnails.
-const RENDER_THUMB_RADIUS: usize = 5;
+/// Render thumbnails near the current page for the sidebar strip.
+/// 50 pages × ~0.1 MB = ~5 MB — negligible memory cost for good UX.
+const RENDER_THUMB_RADIUS: usize = 50;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
@@ -32,7 +32,6 @@ pub struct PdfReader {
     pub outline_collapsed: HashSet<Vec<usize>>,
     pub scroll_offset: f32,                  // manual scroll: how far we've scrolled in pixels
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
-    pub sidebar_scroll: f32,                 // sidebar scroll offset in pixels
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
     pub scroll_offset_dirty: bool, // true when modified by scroll wheel
@@ -50,7 +49,6 @@ impl PdfReader {
             outline_collapsed: HashSet::new(),
             scroll_offset: 0.0,
             sidebar_scroll_handle: ScrollHandle::new(),
-            sidebar_scroll: 0.0,
             render_queue: VecDeque::new(),
             render_stamp: 0,
             scroll_offset_dirty: false,
@@ -68,7 +66,6 @@ impl PdfReader {
             Ok(document) => {
                 self.current_page = 0;
                 self.scroll_offset = 0.0;
-                self.sidebar_scroll = 0.0;
                 self.scroll_offset_dirty = false;
                 self.status = None;
                 self.outline_collapsed.clear();
@@ -110,7 +107,7 @@ impl PdfReader {
         self.current_page = page_index;
         self.scroll_offset_dirty = false;
         if let Some(doc) = &mut self.document {
-            doc.evict_distant(page_index, self.sidebar_scroll);
+            doc.evict_distant(page_index);
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
@@ -165,7 +162,7 @@ impl PdfReader {
             if self.scroll_offset_dirty {
                 // User scrolled: update current_page to match scroll position
                 self.current_page = new_page;
-                doc.evict_distant(new_page, self.sidebar_scroll);
+                doc.evict_distant(new_page);
                 self.scroll_offset_dirty = false;
             } else {
                 // select_page set scroll_offset with stale/fallback dimensions
@@ -232,30 +229,7 @@ impl PdfReader {
         }
     }
 
-    /// Submit thumbnail renders for pages visible in the sidebar viewport.
-    /// Rate-limited to at most MAX_PER_CALL submissions per invocation to
-    /// prevent inflight explosion during rapid scrolling.
-    pub fn render_sidebar_thumbnails(&mut self, sidebar_height: f32) {
-        let Some(doc) = &mut self.document else { return };
-        if !doc.initialized { return; }
-        const MAX_PER_CALL: usize = 8;
-        let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
-        let center = (self.sidebar_scroll / item_h).floor() as usize;
-        let visible = (sidebar_height / item_h).ceil() as usize + 1;
-        let buffer = visible + 10;
-        let start = center.saturating_sub(buffer);
-        let end = (center + buffer).min(doc.page_count.saturating_sub(1));
-        let mut count = 0;
-        for i in start..=end {
-            if count >= MAX_PER_CALL { break; }
-            if !doc.is_cached(i, ScaleType::Thumb) {
-                doc.request_render(i, ScaleType::Thumb);
-                count += 1;
-            }
-        }
-    }
-
-    /// Only poll for completed render results. Does NOT submit new renders.
+        /// Only poll for completed render results. Does NOT submit new renders.
     fn poll_results(&mut self) -> bool {
         self.document
             .as_mut()
@@ -350,10 +324,6 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
-        // Submit thumbnail renders for the sidebar's current viewport.
-        // Done here (not in the scroll handler) to batch rapid scroll
-        // events into a single submission per frame.
-        self.render_sidebar_thumbnails(780.0);
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
