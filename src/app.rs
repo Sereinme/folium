@@ -274,7 +274,6 @@ impl PdfReader {
             if n >= MAX_PER_CALL { break; }
             let above = center.saturating_sub(offset);
             if above >= start && !doc.is_cached(above, ScaleType::Thumb) {
-                eprintln!("[s thumb] submit page={} center={} scroll={:.0}", above, center, self.sidebar_scroll);
                 doc.request_render(above, ScaleType::Thumb);
                 n += 1;
             }
@@ -351,7 +350,6 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
-        self.render_sidebar_thumbnails();
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
