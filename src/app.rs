@@ -265,8 +265,11 @@ impl PdfReader {
     pub fn render_sidebar_thumbnails(&mut self) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return };
-        const RANGE: usize = 60;
-        const MAX_PER_CALL: u8 = 8;
+        // Wide range covers thumbnail item height variance (120–280 px).
+        // The 218 px estimate can be off by ±36%, so ±200 pages ≈ ±44k px
+        // guarantees coverage regardless of the actual per-page height.
+        const RANGE: usize = 200;
+        const MAX_PER_CALL: u8 = 12;
         let center = (self.sidebar_scroll / 218.0) as usize;
         let start = center.saturating_sub(RANGE);
         let end = (center + RANGE).min(doc.page_count.saturating_sub(1));
