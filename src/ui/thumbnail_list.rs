@@ -48,6 +48,7 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
             let px_delta = event.delta.pixel_delta(px(30.0));
             let delta: f32 = f32::from(px_delta.y);
             this.sidebar_scroll = (this.sidebar_scroll - delta).clamp(0.0, max_scroll);
+            eprintln!("[sidebar] scroll={:.0} delta={:.1}", this.sidebar_scroll, delta);
             this.render_sidebar_thumbnails(SIDEBAR_VIEWPORT_H);
             cx.notify();
         },
