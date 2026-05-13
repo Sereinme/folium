@@ -46,6 +46,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
             let delta: f32 = f32::from(px_delta.y);
             this.scroll_offset -= delta;
             this.scroll_offset = this.scroll_offset.clamp(0.0, max_cap);
+            this.scroll_offset_dirty = true;
             cx.notify();
         },
     ));

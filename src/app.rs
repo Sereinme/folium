@@ -33,6 +33,7 @@ pub struct PdfReader {
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
+    pub scroll_offset_dirty: bool, // true when modified by scroll wheel
     pump_active: bool,
     render_gen: usize,
 }
@@ -51,6 +52,7 @@ impl PdfReader {
             sidebar_scroll_handle: ScrollHandle::new(),
             render_queue: VecDeque::new(),
             render_stamp: 0,
+            scroll_offset_dirty: false,
             pump_active: false,
             render_gen: 0,
         };
@@ -67,6 +69,7 @@ impl PdfReader {
             Ok(document) => {
                 self.current_page = 0;
                 self.scroll_offset = 0.0;
+                self.scroll_offset_dirty = false;
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.render_queue.clear();
@@ -107,6 +110,7 @@ impl PdfReader {
 
     pub fn select_page(&mut self, page_index: usize, cx: &mut Context<Self>) {
         self.current_page = page_index;
+        self.scroll_offset_dirty = false;
         if let Some(doc) = &mut self.document {
             doc.evict_distant(page_index);
             let (nw, nh) = doc.page_dim(page_index);
@@ -122,6 +126,7 @@ impl PdfReader {
     fn previous_page(&mut self, cx: &mut Context<Self>) {
         if self.current_page > 0 {
             self.current_page -= 1;
+            self.scroll_offset_dirty = false;
             if let Some(doc) = &self.document {
                 let (nw, nh) = doc.page_dim(self.current_page);
                 let a = if nw > 0.0 { nh / nw } else { 1.414 };
@@ -137,6 +142,7 @@ impl PdfReader {
         if let Some(document) = &self.document {
             if self.current_page + 1 < document.page_count {
                 self.current_page += 1;
+                self.scroll_offset_dirty = false;
                 if let Some(doc) = &self.document {
                     let (nw, nh) = doc.page_dim(self.current_page);
                     let a = if nw > 0.0 { nh / nw } else { 1.414 };
@@ -158,9 +164,18 @@ impl PdfReader {
         let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
         let new_page = (self.scroll_offset / step).round() as usize;
         if new_page < doc.page_count && new_page != self.current_page {
-            self.current_page = new_page;
-            doc.evict_distant(new_page);
-            self.sidebar_scroll_handle.scroll_to_item(new_page);
+            if self.scroll_offset_dirty {
+                // User scrolled: update current_page to match scroll position
+                self.current_page = new_page;
+                doc.evict_distant(new_page);
+                self.scroll_offset_dirty = false;
+            } else {
+                // select_page set scroll_offset with stale/fallback dimensions
+                // that have since been updated by a page render. Keep
+                // current_page, recalculate scroll_offset.
+                self.scroll_offset = self.current_page as f32 * step;
+            }
+            self.sidebar_scroll_handle.scroll_to_item(self.current_page);
         }
     }
 
