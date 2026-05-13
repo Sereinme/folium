@@ -251,9 +251,18 @@ impl PdfReader {
             && self.document.as_ref().map_or(false, |d| d.inflight == 0)
             && self.document.as_ref().is_some_and(|d| {
                 let cur = self.current_page;
-                let end = (cur + RENDER_FULL_RADIUS + 1).min(d.page_count);
-                (cur..end)
-                    .any(|i| !d.is_cached(i, ScaleType::Full) || !d.is_cached(i, ScaleType::Thumb))
+                let full_start = cur.saturating_sub(RENDER_FULL_RADIUS);
+                let full_end = (cur + RENDER_FULL_RADIUS + 1).min(d.page_count);
+                let needs_full = (full_start..full_end)
+                    .any(|i| !d.is_cached(i, ScaleType::Full)
+                        || !d.is_cached(i, ScaleType::Thumb));
+
+                let thumb_start = cur.saturating_sub(RENDER_THUMB_RADIUS);
+                let thumb_end = (cur + RENDER_THUMB_RADIUS + 1).min(d.page_count);
+                let needs_thumb = (thumb_start..thumb_end)
+                    .any(|i| !d.is_cached(i, ScaleType::Thumb));
+
+                needs_full || needs_thumb
             });
 
         if needs_rebuild {
@@ -272,6 +281,34 @@ impl PdfReader {
             }
         }
         changed || submitted
+    }
+
+    fn print_memory_diag(&self) {
+        if let Some(doc) = &self.document {
+            let full_mem: u64 = doc.pages.iter()
+                .filter_map(|p| p.as_ref())
+                .map(|p| p.width as u64 * p.height as u64 * 4)
+                .sum();
+            let preview_mem: u64 = doc.previews.values()
+                .map(|p| p.width as u64 * p.height as u64 * 4)
+                .sum();
+            let thumb_mem: u64 = doc.thumbnails.iter()
+                .filter_map(|t| t.as_ref())
+                .map(|t| t.width as u64 * t.height as u64 * 4)
+                .sum();
+            let full_n = doc.pages.iter().filter(|p| p.is_some()).count();
+            let prev_n = doc.previews.len();
+            let thumb_n = doc.thumbnails.iter().filter(|t| t.is_some()).count();
+            eprintln!(
+                "[mem] Full={}×{:.1}MB Preview={}×{:.1}MB Thumb={}×{:.1}MB img={:.1}MB | page_count={} inflight={}",
+                full_n, full_mem as f64 / 1_048_576.0,
+                prev_n, preview_mem as f64 / 1_048_576.0,
+                thumb_n, thumb_mem as f64 / 1_048_576.0,
+                (full_mem + preview_mem + thumb_mem) as f64 / 1_048_576.0,
+                doc.page_count,
+                doc.inflight,
+            );
+        }
     }
 
     /// Returns true if the render pump should keep running.
@@ -316,6 +353,7 @@ impl PdfReader {
             this.update(cx, |this, _| {
                 if this.render_gen == generation {
                     this.pump_active = false;
+                    this.print_memory_diag();
                 }
             })?;
 
