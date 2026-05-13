@@ -19,7 +19,8 @@ use crate::ui::{self, styles};
 
 /// Render the current page ±1 at Full quality for smooth scrolling.
 const RENDER_FULL_RADIUS: usize = 1;
-/// Render thumbnails for the sidebar strip.
+/// Render thumbnails near the current page. The sidebar independently
+/// requests thumbnails for its visible viewport via render_sidebar_thumbnails.
 const RENDER_THUMB_RADIUS: usize = 5;
 
 pub struct PdfReader {
@@ -31,6 +32,7 @@ pub struct PdfReader {
     pub outline_collapsed: HashSet<Vec<usize>>,
     pub scroll_offset: f32,                  // manual scroll: how far we've scrolled in pixels
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
+    pub sidebar_scroll: f32,                 // sidebar scroll offset in pixels
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
     pub scroll_offset_dirty: bool, // true when modified by scroll wheel
@@ -48,6 +50,7 @@ impl PdfReader {
             outline_collapsed: HashSet::new(),
             scroll_offset: 0.0,
             sidebar_scroll_handle: ScrollHandle::new(),
+            sidebar_scroll: 0.0,
             render_queue: VecDeque::new(),
             render_stamp: 0,
             scroll_offset_dirty: false,
@@ -65,6 +68,7 @@ impl PdfReader {
             Ok(document) => {
                 self.current_page = 0;
                 self.scroll_offset = 0.0;
+                self.sidebar_scroll = 0.0;
                 self.scroll_offset_dirty = false;
                 self.status = None;
                 self.outline_collapsed.clear();
@@ -228,6 +232,26 @@ impl PdfReader {
         }
     }
 
+    /// Submit thumbnail renders for pages visible in the sidebar viewport.
+    /// Called when the sidebar is scrolled independently of the main page.
+    pub fn render_sidebar_thumbnails(&mut self, sidebar_height: f32) {
+        let Some(doc) = &mut self.document else { return };
+        if !doc.initialized { return; }
+        // Each thumbnail item is ~210 px tall (padding + label + image + gap)
+        let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
+        let first = (self.sidebar_scroll / item_h).floor() as usize;
+        let last = ((self.sidebar_scroll + sidebar_height) / item_h).ceil() as usize;
+        let last = last.min(doc.page_count.saturating_sub(1));
+        let buffer = 5; // extra pages above/below viewport
+        let start = first.saturating_sub(buffer);
+        let end = (last + buffer).min(doc.page_count.saturating_sub(1));
+        for i in start..=end {
+            if !doc.is_cached(i, ScaleType::Thumb) {
+                doc.request_render(i, ScaleType::Thumb);
+            }
+        }
+    }
+
     /// Only poll for completed render results. Does NOT submit new renders.
     fn poll_results(&mut self) -> bool {
         self.document
@@ -329,6 +353,7 @@ impl Render for PdfReader {
         // Initial load: Init just arrived, kick off first render batch
         if !was_inited && now_inited {
             self.submit_renders();
+            self.render_sidebar_thumbnails(780.0);
         }
 
         if self.has_pending_work() {

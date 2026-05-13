@@ -15,8 +15,8 @@ use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 const FULL_CACHE_RADIUS: usize = 2;
 
 const PREVIEW_CACHE_RADIUS: usize = 2;
-/// Evict thumbnails beyond this radius to prevent unbounded growth.
-const THUMB_CACHE_RADIUS: usize = 30;
+/// Evict thumbnails beyond this radius.
+const THUMB_CACHE_RADIUS: usize = 120;
 
 pub struct PdfDocument {
     pub path: PathBuf,
@@ -179,7 +179,12 @@ impl PdfDocument {
     }
 }
 
-fn build_page_image(samples: Vec<u8>, width: u32, height: u32) -> PdfPageImage {
+fn build_page_image(mut samples: Vec<u8>, width: u32, height: u32) -> PdfPageImage {
+    // mupdf produces RGBA byte order. GPUI on Metal expects BGRA.
+    // Swap R (offset 0) and B (offset 2) for each pixel.
+    for chunk in samples.chunks_exact_mut(4) {
+        chunk.swap(0, 2);
+    }
     let buffer = RgbaImage::from_raw(width, height, samples)
         .expect("mupdf returned invalid pixel buffer");
     PdfPageImage {
