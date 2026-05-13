@@ -350,6 +350,7 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
+        self.render_sidebar_thumbnails();
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 

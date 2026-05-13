@@ -45,7 +45,6 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
             let px_delta = event.delta.pixel_delta(px(30.0));
             let delta: f32 = f32::from(px_delta.y);
             this.sidebar_scroll = (this.sidebar_scroll - delta).clamp(0.0, max_scroll);
-            this.render_sidebar_thumbnails();
             cx.notify();
         },
     ));
@@ -84,10 +83,11 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
 
         if let Some(cached) = document.cached_page(page_index, ScaleType::Thumb) {
             let ratio = cached.height as f32 / cached.width.max(1) as f32;
-            // Stamp each thumbnail image so GPUI repaints when it loads
+            // Stamp with render_stamp so GPUI repaints every frame when cached
+            let id = pdfr.render_stamp.wrapping_mul(1000).wrapping_add(page_index);
             item = item.child(
                 div()
-                    .id(ElementId::named_usize("thumb-img", page_index * 2 + 1))
+                    .id(ElementId::named_usize("thumb-img", id))
                     .child(
                         img(cached.image.clone())
                             .w_full()
@@ -98,14 +98,10 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
         } else {
             item = item.child(
                 div()
-                    .id(ElementId::named_usize("thumb-img", page_index * 2))
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(80.0))
-                            .bg(styles::BORDER)
-                            .rounded_sm(),
-                    ),
+                    .w_full()
+                    .h(px(80.0))
+                    .bg(styles::BORDER)
+                    .rounded_sm(),
             );
         }
 
