@@ -110,7 +110,7 @@ impl PdfReader {
         self.current_page = page_index;
         self.scroll_offset_dirty = false;
         if let Some(doc) = &mut self.document {
-            doc.evict_distant(page_index);
+            doc.evict_distant(page_index, self.sidebar_scroll);
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
@@ -165,7 +165,7 @@ impl PdfReader {
             if self.scroll_offset_dirty {
                 // User scrolled: update current_page to match scroll position
                 self.current_page = new_page;
-                doc.evict_distant(new_page);
+                doc.evict_distant(new_page, self.sidebar_scroll);
                 self.scroll_offset_dirty = false;
             } else {
                 // select_page set scroll_offset with stale/fallback dimensions

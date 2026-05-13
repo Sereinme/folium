@@ -15,8 +15,6 @@ use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 const FULL_CACHE_RADIUS: usize = 2;
 
 const PREVIEW_CACHE_RADIUS: usize = 2;
-/// Evict thumbnails beyond this radius.
-const THUMB_CACHE_RADIUS: usize = 120;
 
 pub struct PdfDocument {
     pub path: PathBuf,
@@ -146,11 +144,10 @@ impl PdfDocument {
         }
     }
 
-    /// Drop cached renders that are too far from the current page.
-    /// Full (2×, 8 MB/page) is the dominant memory consumer, so its radius is tight.
-    /// Preview (1×, 2 MB/page) has a wider radius for smooth nearby scrolling.
-    /// Thumbnails (0.25×, 0.12 MB/page) are never evicted — they're negligible.
-    pub fn evict_distant(&mut self, current_page: usize) {
+    /// Drop cached renders that are too far from BOTH the main page and
+    /// the sidebar viewport. Full/Preview only follow the main page.
+    /// Thumbnails follow both independently.
+    pub fn evict_distant(&mut self, current_page: usize, sidebar_scroll: f32) {
         let cur = current_page as isize;
 
         for (i, slot) in self.pages.iter_mut().enumerate() {
@@ -163,8 +160,17 @@ impl PdfDocument {
             (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS as usize
         });
 
+        // Thumbnails: keep if near the main page OR near the sidebar viewport.
+        // Each thumbnail item is ~210 px tall (THUMB_MAX_HEIGHT + padding).
+        const THUMB_ITEM_H: f32 = 218.0;
+        const MAIN_THUMB_RADIUS: isize = 30;
+        const SIDEBAR_THUMB_RADIUS: isize = 20;
+        let sidebar_page = (sidebar_scroll / THUMB_ITEM_H) as isize;
         for (i, slot) in self.thumbnails.iter_mut().enumerate() {
-            if (i as isize - cur).unsigned_abs() > THUMB_CACHE_RADIUS as usize {
+            let i = i as isize;
+            let near_main = (i - cur).unsigned_abs() <= MAIN_THUMB_RADIUS as usize;
+            let near_sidebar = (i - sidebar_page).unsigned_abs() <= SIDEBAR_THUMB_RADIUS as usize;
+            if !near_main && !near_sidebar {
                 *slot = None;
             }
         }
