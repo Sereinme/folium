@@ -27,7 +27,7 @@ fn shrink_mupdf_store() {
 
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
 
-const DL_CACHE_MAX: usize = 1;
+const DL_CACHE_MAX: usize = 0;
 
 struct DlCache(Vec<(usize, DisplayList)>);
 

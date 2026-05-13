@@ -17,11 +17,9 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-/// Render Full (2×) only for the current page and its immediate neighbours.
-/// SumatraPDF-style: discard when out of view, re-render on scroll-back.
-const RENDER_FULL_RADIUS: usize = 1;
-/// Only pre-render thumbnails for a few nearby pages.
-const RENDER_THUMB_RADIUS: usize = 5;
+/// Render only the current page. No look-ahead — SumatraPDF-style.
+const RENDER_FULL_RADIUS: usize = 0;
+const RENDER_THUMB_RADIUS: usize = 0;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
@@ -326,6 +324,7 @@ impl PdfReader {
     }
 
     fn ensure_pump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        eprintln!("[pump] ensure_pump active={} needs={}", self.pump_active, self.needs_pump());
         if self.pump_active {
             return;
         }
@@ -345,13 +344,18 @@ impl PdfReader {
 
                 let keep_going = this.update(cx, |this, cx| {
                     if this.render_gen != generation {
+                        eprintln!("[pump] stale generation ({} vs {})", this.render_gen, generation);
                         return false;
                     }
                     let changed = this.poll_and_submit();
                     if changed {
                         cx.notify();
                     }
-                    this.needs_pump()
+                    let needs = this.needs_pump();
+                    if !needs {
+                        eprintln!("[pump] exiting: inflight={}", this.document.as_ref().map_or(0, |d| d.inflight));
+                    }
+                    needs
                 })?;
 
                 if !keep_going {

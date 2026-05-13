@@ -12,13 +12,11 @@ use smallvec::SmallVec;
 use crate::render_queue::{RenderHandle, ToMain};
 use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 
-/// Keep Full (2×) only for the current page ±1. Beyond that, discard
-/// immediately — SumatraPDF-style: re-render on scroll-back.
-const FULL_CACHE_RADIUS: usize = 1;
+/// Keep Full only for the current page. Once you scroll away, discard.
+const FULL_CACHE_RADIUS: usize = 0;
 
-/// Keep Preview (1×) for a couple of nearby pages so one-wheel-click
-/// scrolls don't flash "loading".
-const PREVIEW_CACHE_RADIUS: usize = 2;
+/// Keep Preview only for the current page ±1.
+const PREVIEW_CACHE_RADIUS: usize = 1;
 
 pub struct PdfDocument {
     pub path: PathBuf,
