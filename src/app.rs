@@ -33,8 +33,6 @@ pub struct PdfReader {
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
     pub scroll_offset_dirty: bool, // true when modified by scroll wheel
-    pump_active: bool,
-    render_gen: usize,
 }
 
 impl PdfReader {
@@ -52,8 +50,6 @@ impl PdfReader {
             render_queue: VecDeque::new(),
             render_stamp: 0,
             scroll_offset_dirty: false,
-            pump_active: false,
-            render_gen: 0,
         };
 
         if let Some(path) = initial_path {
@@ -72,8 +68,6 @@ impl PdfReader {
                 self.status = None;
                 self.outline_collapsed.clear();
                 self.render_queue.clear();
-                self.pump_active = false;
-                self.render_gen = self.render_gen.wrapping_add(1);
                 self.document = Some(document);
                 cx.notify();
             }
@@ -318,58 +312,19 @@ impl PdfReader {
         }
     }
 
-    /// Returns true if the render pump should keep running.
-    fn needs_pump(&self) -> bool {
+    /// Returns true if we need to keep polling for render results.
+    fn has_pending_work(&self) -> bool {
         self.document.as_ref().is_some_and(|d| !d.initialized || d.inflight > 0)
     }
 
-    fn ensure_pump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        eprintln!("[pump] ensure_pump active={} needs={}", self.pump_active, self.needs_pump());
-        if self.pump_active {
-            return;
-        }
-        let needs = self.needs_pump();
-        if !needs {
-            return;
-        }
-
-        self.pump_active = true;
-        let generation = self.render_gen;
-
+    /// Schedule a single re-render after a short delay. Used instead of a
+    /// long-running pump to avoid complex lifecycle bugs (pump restart loops).
+    fn schedule_poll(&self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(32))
-                    .await;
-
-                let keep_going = this.update(cx, |this, cx| {
-                    if this.render_gen != generation {
-                        eprintln!("[pump] stale generation ({} vs {})", this.render_gen, generation);
-                        return false;
-                    }
-                    let changed = this.poll_and_submit();
-                    if changed {
-                        cx.notify();
-                    }
-                    let needs = this.needs_pump();
-                    if !needs {
-                        eprintln!("[pump] exiting: inflight={}", this.document.as_ref().map_or(0, |d| d.inflight));
-                    }
-                    needs
-                })?;
-
-                if !keep_going {
-                    break;
-                }
-            }
-
-            this.update(cx, |this, _| {
-                if this.render_gen == generation {
-                    this.pump_active = false;
-                    this.print_memory_diag();
-                }
-            })?;
-
+            cx.background_executor()
+                .timer(Duration::from_millis(32))
+                .await;
+            let _ = this.update(cx, |_, cx| cx.notify());
             Ok::<_, anyhow::Error>(())
         })
         .detach();
@@ -382,12 +337,13 @@ impl Render for PdfReader {
         self.sync_current_page();
         self.poll_and_submit();
 
-        // Only restart the pump when there's real work to do (inflight > 0
-        // or not yet initialized). Don't restart just because a late render
-        // result arrived — that caused 40+ pump restarts and creeping RSS.
-        if self.needs_pump() {
-            self.ensure_pump(window, cx);
+        // If renders are in flight or doc not yet initialized, schedule a
+        // one-shot re-render to poll for results. No long-running pump —
+        // each render independently decides whether to schedule the next.
+        if self.has_pending_work() {
+            self.schedule_poll(window, cx);
         }
+        self.print_memory_diag();
 
         let title = self
             .document
