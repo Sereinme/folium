@@ -347,13 +347,16 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
+        // Submit thumbnail renders for the sidebar's current viewport.
+        // Done here (not in the scroll handler) to batch rapid scroll
+        // events into a single submission per frame.
+        self.render_sidebar_thumbnails(780.0);
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
         // Initial load: Init just arrived, kick off first render batch
         if !was_inited && now_inited {
             self.submit_renders();
-            self.render_sidebar_thumbnails(780.0);
         }
 
         if self.has_pending_work() {
