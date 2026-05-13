@@ -91,6 +91,7 @@ impl PdfDocument {
                                     self.previews.insert(page_index, image);
                                 }
                                 ScaleType::Thumb => {
+                                    eprintln!("[thumb-cached] page={}", page_index);
                                     self.thumbnails[page_index] = Some(image);
                                 }
                             }
@@ -167,10 +168,13 @@ impl PdfDocument {
         const SIDEBAR_THUMB_RADIUS: isize = 20;
         let sidebar_page = (sidebar_scroll / THUMB_ITEM_H) as isize;
         for (i, slot) in self.thumbnails.iter_mut().enumerate() {
-            let i = i as isize;
-            let near_main = (i - cur).unsigned_abs() <= MAIN_THUMB_RADIUS as usize;
-            let near_sidebar = (i - sidebar_page).unsigned_abs() <= SIDEBAR_THUMB_RADIUS as usize;
+            let i_i = i as isize;
+            let near_main = (i_i - cur).unsigned_abs() <= MAIN_THUMB_RADIUS as usize;
+            let near_sidebar = (i_i - sidebar_page).unsigned_abs() <= SIDEBAR_THUMB_RADIUS as usize;
             if !near_main && !near_sidebar {
+                if slot.is_some() {
+                    eprintln!("[thumb-evict] page={} main={} sidebar_page={}", i, cur, sidebar_page);
+                }
                 *slot = None;
             }
         }
