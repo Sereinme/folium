@@ -12,11 +12,11 @@ use smallvec::SmallVec;
 use crate::render_queue::{RenderHandle, ToMain};
 use crate::types::{OutlineItem, PdfPageImage, ScaleType};
 
-/// Keep Full only for the current page. Once you scroll away, discard.
-const FULL_CACHE_RADIUS: usize = 0;
+const FULL_CACHE_RADIUS: usize = 2;
 
-/// Keep Preview only for the current page ±1.
-const PREVIEW_CACHE_RADIUS: usize = 1;
+const PREVIEW_CACHE_RADIUS: usize = 2;
+/// Evict thumbnails beyond this radius to prevent unbounded growth.
+const THUMB_CACHE_RADIUS: usize = 30;
 
 pub struct PdfDocument {
     pub path: PathBuf,
@@ -162,6 +162,12 @@ impl PdfDocument {
         self.previews.retain(|&idx, _| {
             (idx as isize - cur).unsigned_abs() <= PREVIEW_CACHE_RADIUS as usize
         });
+
+        for (i, slot) in self.thumbnails.iter_mut().enumerate() {
+            if (i as isize - cur).unsigned_abs() > THUMB_CACHE_RADIUS as usize {
+                *slot = None;
+            }
+        }
     }
 
     /// Natural page dimensions (from any rendered scale), or a default A4 fallback

@@ -17,9 +17,10 @@ use crate::pdf::PdfDocument;
 use crate::types::{ScaleType, SidebarTab};
 use crate::ui::{self, styles};
 
-/// Render only the current page. No look-ahead — SumatraPDF-style.
-const RENDER_FULL_RADIUS: usize = 0;
-const RENDER_THUMB_RADIUS: usize = 0;
+/// Render the current page ±1 at Full quality for smooth scrolling.
+const RENDER_FULL_RADIUS: usize = 1;
+/// Render thumbnails for the sidebar strip.
+const RENDER_THUMB_RADIUS: usize = 5;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
