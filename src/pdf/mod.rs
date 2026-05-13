@@ -91,6 +91,7 @@ impl PdfDocument {
                                     self.previews.insert(page_index, image);
                                 }
                                 ScaleType::Thumb => {
+                                    eprintln!("[s cached] page={}", page_index);
                                     self.thumbnails[page_index] = Some(image);
                                 }
                             }
@@ -168,6 +169,9 @@ impl PdfDocument {
             let near_main = (i - cur).unsigned_abs() <= MAIN_RADIUS as usize;
             let near_sidebar = (i - sidebar_center).unsigned_abs() <= SIDEBAR_RADIUS as usize;
             if !near_main && !near_sidebar {
+                if slot.is_some() {
+                    eprintln!("[s evict] page={} main={} sidebar_center={}", i, cur, sidebar_center);
+                }
                 *slot = None;
             }
         }

@@ -261,10 +261,6 @@ impl PdfReader {
         submitted
     }
 
-    /// Submit thumbnail renders for pages near the sidebar's current
-    /// scroll position. Wide range (±60) covers thumbnail item-height
-    /// variance (120–280 px). Submits from center outward so the most
-    /// visible pages get rendered first.
     pub fn render_sidebar_thumbnails(&mut self) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return };
@@ -278,6 +274,7 @@ impl PdfReader {
             if n >= MAX_PER_CALL { break; }
             let above = center.saturating_sub(offset);
             if above >= start && !doc.is_cached(above, ScaleType::Thumb) {
+                eprintln!("[s thumb] submit page={} center={} scroll={:.0}", above, center, self.sidebar_scroll);
                 doc.request_render(above, ScaleType::Thumb);
                 n += 1;
             }
