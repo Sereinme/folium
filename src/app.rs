@@ -259,6 +259,7 @@ impl PdfReader {
         submitted
     }
 
+    #[allow(dead_code)]
     fn print_memory_diag(&self) {
         if let Some(doc) = &self.document {
             let full_mem: u64 = doc.pages.iter()
@@ -331,7 +332,6 @@ impl Render for PdfReader {
         if self.has_pending_work() {
             self.schedule_poll(window, cx);
         }
-        self.print_memory_diag();
 
         let title = self
             .document
