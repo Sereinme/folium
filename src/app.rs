@@ -237,18 +237,23 @@ impl PdfReader {
     pub fn render_sidebar_thumbnails(&mut self, sidebar_height: f32) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return; }
-        // Each thumbnail item is ~210 px tall (padding + label + image + gap)
         let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
         let first = (self.sidebar_scroll / item_h).floor() as usize;
         let last = ((self.sidebar_scroll + sidebar_height) / item_h).ceil() as usize;
         let last = last.min(doc.page_count.saturating_sub(1));
-        let buffer = 5; // extra pages above/below viewport
+        let buffer = 5;
         let start = first.saturating_sub(buffer);
         let end = (last + buffer).min(doc.page_count.saturating_sub(1));
+        let inflight_before = doc.inflight;
         for i in start..=end {
             if !doc.is_cached(i, ScaleType::Thumb) {
                 doc.request_render(i, ScaleType::Thumb);
             }
+        }
+        let new_submissions = doc.inflight.saturating_sub(inflight_before);
+        if new_submissions > 0 {
+            eprintln!("[sidebar] pg={} scroll={:.0} range={}-{} new={} inflight={}",
+                self.current_page, self.sidebar_scroll, start, end, new_submissions, doc.inflight);
         }
     }
 

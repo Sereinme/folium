@@ -42,13 +42,15 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
         .flex_col()
         .gap_2();
 
-    // Track sidebar scroll position; thumbnail submission is deferred
-    // to render() to batch rapid scroll events into one submission.
+    // Track sidebar scroll position and submit thumbnails for the visible
+    // range at each scroll tick (not deferred to render, which would miss
+    // intermediate positions during rapid scrolling).
     list.interactivity().on_scroll_wheel(cx.listener(
         move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
             let px_delta = event.delta.pixel_delta(px(30.0));
             let delta: f32 = f32::from(px_delta.y);
             this.sidebar_scroll = (this.sidebar_scroll - delta).clamp(0.0, max_scroll);
+            this.render_sidebar_thumbnails(SIDEBAR_VIEWPORT_H);
             cx.notify();
         },
     ));
