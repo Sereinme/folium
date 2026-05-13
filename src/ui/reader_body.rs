@@ -47,6 +47,11 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
             this.scroll_offset -= delta;
             this.scroll_offset = this.scroll_offset.clamp(0.0, max_cap);
             this.scroll_offset_dirty = true;
+            let prev_page = this.current_page;
+            this.sync_current_page();
+            if this.current_page != prev_page {
+                this.submit_renders();
+            }
             cx.notify();
         },
     ));

@@ -112,7 +112,7 @@ impl PdfReader {
             self.scroll_offset = page_index as f32 * step;
         }
         self.sidebar_scroll_handle.scroll_to_item(page_index);
-        self.rebuild_render_queue();
+        self.submit_renders();
         cx.notify();
     }
 
@@ -126,7 +126,7 @@ impl PdfReader {
                 self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
             }
             self.sidebar_scroll_handle.scroll_to_item(self.current_page);
-            self.rebuild_render_queue();
+            self.submit_renders();
             cx.notify();
         }
     }
@@ -142,7 +142,7 @@ impl PdfReader {
                     self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
                 }
                 self.sidebar_scroll_handle.scroll_to_item(self.current_page);
-                self.rebuild_render_queue();
+                self.submit_renders();
                 cx.notify();
             }
         }
@@ -227,39 +227,22 @@ impl PdfReader {
         }
     }
 
-    fn poll_and_submit(&mut self) -> bool {
-        let changed = self
-            .document
+    /// Only poll for completed render results. Does NOT submit new renders.
+    fn poll_results(&mut self) -> bool {
+        self.document
             .as_mut()
-            .map_or(false, |d| d.poll_render_results());
+            .map_or(false, |d| d.poll_render_results())
+    }
 
+    /// Submit renders for the current page and its neighbours. Called from
+    /// user actions (scroll, navigate, open) — never from poll/auto paths.
+    pub fn submit_renders(&mut self) -> bool {
         let inited = self.document.as_ref().is_some_and(|d| d.initialized);
-
         if !inited {
-            return changed || true;
+            return true;
         }
 
-        let needs_rebuild = self.render_queue.is_empty()
-            && self.document.as_ref().map_or(false, |d| d.inflight == 0)
-            && self.document.as_ref().is_some_and(|d| {
-                let cur = self.current_page;
-                let full_start = cur.saturating_sub(RENDER_FULL_RADIUS);
-                let full_end = (cur + RENDER_FULL_RADIUS + 1).min(d.page_count);
-                let needs_full = (full_start..full_end)
-                    .any(|i| !d.is_cached(i, ScaleType::Full)
-                        || !d.is_cached(i, ScaleType::Thumb));
-
-                let thumb_start = cur.saturating_sub(RENDER_THUMB_RADIUS);
-                let thumb_end = (cur + RENDER_THUMB_RADIUS + 1).min(d.page_count);
-                let needs_thumb = (thumb_start..thumb_end)
-                    .any(|i| !d.is_cached(i, ScaleType::Thumb));
-
-                needs_full || needs_thumb
-            });
-
-        if needs_rebuild {
-            self.rebuild_render_queue();
-        }
+        self.rebuild_render_queue();
 
         let batch: Vec<_> = self.render_queue.drain(..).collect();
         let mut submitted = false;
@@ -272,7 +255,7 @@ impl PdfReader {
                 submitted = true;
             }
         }
-        changed || submitted
+        submitted
     }
 
     fn print_memory_diag(&self) {
@@ -335,11 +318,15 @@ impl Render for PdfReader {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
-        self.poll_and_submit();
+        let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
+        self.poll_results();
+        let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
-        // If renders are in flight or doc not yet initialized, schedule a
-        // one-shot re-render to poll for results. No long-running pump —
-        // each render independently decides whether to schedule the next.
+        // Initial load: Init just arrived, kick off first render batch
+        if !was_inited && now_inited {
+            self.submit_renders();
+        }
+
         if self.has_pending_work() {
             self.schedule_poll(window, cx);
         }
