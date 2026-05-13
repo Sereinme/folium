@@ -1,6 +1,5 @@
 use gpui::{
-    div, px, rgb, Context, ElementId, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Styled,
+    div, px, rgb, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
 };
 
 use crate::types::SidebarTab;
@@ -16,11 +15,6 @@ pub fn sidebar(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl IntoEl
     } else {
         outline_panel(pdfr, cx).into_any_element()
     };
-
-    // Force GPUI to rebuild the sidebar content subtree each frame, so
-    // newly cached thumbnails are painted. The inner scrollable list keeps
-    // its fixed ID for ScrollHandle tracking.
-    let stamp = pdfr.render_stamp;
 
     div()
         .w(px(styles::SIDEBAR_WIDTH))
@@ -39,12 +33,7 @@ pub fn sidebar(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> impl IntoEl
                 .child(tab_button("Thumbnails", SidebarTab::Thumbnails, pdfr, cx))
                 .child(tab_button("Outline", SidebarTab::Outline, pdfr, cx)),
         )
-        .child(
-            div()
-                .flex_1()
-                .id(ElementId::named_usize("sidebar-content", stamp))
-                .child(content),
-        )
+        .child(content)
 }
 
 fn tab_button(
