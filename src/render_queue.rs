@@ -26,13 +26,6 @@ fn shrink_mupdf_store() {
     unsafe { mupdf_sys::fz_shrink_store(raw_context(), 50) };
 }
 
-/// Aggressive shrink: evict everything from the shared store.
-/// Called after a parallel batch completes and all DisplayLists
-/// have been dropped, so no store entries are pinned by DL references.
-fn empty_mupdf_store() {
-    unsafe { mupdf_sys::fz_empty_store(raw_context()) };
-}
-
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
 
 const DL_CACHE_MAX: usize = 5;
@@ -236,7 +229,6 @@ impl RenderHandle {
                     .zip(dl_refs.par_iter())
                     .map(|((_id, page_index, scale), dl)| {
                         let result = Self::render_from_dl(dl, *scale);
-                        shrink_mupdf_store();
                         (*_id, *page_index, *scale, result)
                     })
                     .collect::<Vec<_>>();
@@ -255,10 +247,9 @@ impl RenderHandle {
                 });
             }
 
-            // Now that all DLs are dropped, the shared store can be
-            // fully evacuated. This frees resources accumulated by
-            // ALL rayon threads, not just the current one.
-            empty_mupdf_store();
+            // dl_map is dropped; running shrink now evicts objects
+            // that were pinned by the batch's DisplayLists.
+            shrink_mupdf_store();
         } else {
             // ── Serial path (1–2 items) ───────────────────────────
             for (_id, page_index, scale) in batch {
