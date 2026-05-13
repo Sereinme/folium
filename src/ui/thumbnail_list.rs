@@ -26,6 +26,9 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
             .into_any_element();
     };
 
+    let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
+    let max_scroll = (document.page_count as f32 * item_h - 780.0).max(0.0);
+
     let mut list = div()
         .id(ElementId::named_usize("sidebar-thumbnails", 0))
         .track_scroll(&pdfr.sidebar_scroll_handle)
@@ -35,6 +38,17 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
         .flex()
         .flex_col()
         .gap_2();
+
+    // Track sidebar scroll position for viewport-aware thumbnail rendering
+    list.interactivity().on_scroll_wheel(cx.listener(
+        move |this: &mut PdfReader, event: &gpui::ScrollWheelEvent, _window, cx| {
+            let px_delta = event.delta.pixel_delta(px(30.0));
+            let delta: f32 = f32::from(px_delta.y);
+            this.sidebar_scroll = (this.sidebar_scroll - delta).clamp(0.0, max_scroll);
+            this.render_sidebar_thumbnails();
+            cx.notify();
+        },
+    ));
 
     for page_index in 0..document.page_count {
         let selected = pdfr.current_page == page_index;

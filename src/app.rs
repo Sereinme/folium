@@ -19,9 +19,8 @@ use crate::ui::{self, styles};
 
 /// Render the current page ±1 at Full quality for smooth scrolling.
 const RENDER_FULL_RADIUS: usize = 1;
-/// Render thumbnails near the current page for the sidebar strip.
-/// 50 pages × ~0.1 MB = ~5 MB — negligible memory cost for good UX.
-const RENDER_THUMB_RADIUS: usize = 50;
+/// Render thumbnails near the current page.
+const RENDER_THUMB_RADIUS: usize = 10;
 
 pub struct PdfReader {
     pub document: Option<PdfDocument>,
@@ -32,6 +31,7 @@ pub struct PdfReader {
     pub outline_collapsed: HashSet<Vec<usize>>,
     pub scroll_offset: f32,                  // manual scroll: how far we've scrolled in pixels
     pub sidebar_scroll_handle: ScrollHandle, // sidebar thumbnail scroll
+    pub sidebar_scroll: f32,                 // sidebar scroll offset (px)
     render_queue: VecDeque<(usize, ScaleType)>,
     pub render_stamp: usize,                 // increment each render() to force GPUI repaint
     pub scroll_offset_dirty: bool, // true when modified by scroll wheel
@@ -49,6 +49,7 @@ impl PdfReader {
             outline_collapsed: HashSet::new(),
             scroll_offset: 0.0,
             sidebar_scroll_handle: ScrollHandle::new(),
+            sidebar_scroll: 0.0,
             render_queue: VecDeque::new(),
             render_stamp: 0,
             scroll_offset_dirty: false,
@@ -107,7 +108,7 @@ impl PdfReader {
         self.current_page = page_index;
         self.scroll_offset_dirty = false;
         if let Some(doc) = &mut self.document {
-            doc.evict_distant(page_index);
+            doc.evict_distant(page_index, self.sidebar_scroll);
             let (nw, nh) = doc.page_dim(page_index);
             let a = if nw > 0.0 { nh / nw } else { 1.414 };
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
@@ -162,7 +163,7 @@ impl PdfReader {
             if self.scroll_offset_dirty {
                 // User scrolled: update current_page to match scroll position
                 self.current_page = new_page;
-                doc.evict_distant(new_page);
+                doc.evict_distant(new_page, self.sidebar_scroll);
                 self.scroll_offset_dirty = false;
             } else {
                 // select_page set scroll_offset with stale/fallback dimensions
@@ -260,6 +261,35 @@ impl PdfReader {
         submitted
     }
 
+    /// Submit thumbnail renders for pages near the sidebar's current
+    /// scroll position. Wide range (±60) covers thumbnail item-height
+    /// variance (120–280 px). Submits from center outward so the most
+    /// visible pages get rendered first.
+    pub fn render_sidebar_thumbnails(&mut self) {
+        let Some(doc) = &mut self.document else { return };
+        if !doc.initialized { return };
+        const RANGE: usize = 60;
+        const MAX_PER_CALL: u8 = 8;
+        let center = (self.sidebar_scroll / 218.0) as usize;
+        let start = center.saturating_sub(RANGE);
+        let end = (center + RANGE).min(doc.page_count.saturating_sub(1));
+        let mut n: u8 = 0;
+        for offset in 0..=RANGE {
+            if n >= MAX_PER_CALL { break; }
+            let above = center.saturating_sub(offset);
+            if above >= start && !doc.is_cached(above, ScaleType::Thumb) {
+                doc.request_render(above, ScaleType::Thumb);
+                n += 1;
+            }
+            if n >= MAX_PER_CALL { break; }
+            let below = center + offset;
+            if offset > 0 && below <= end && !doc.is_cached(below, ScaleType::Thumb) {
+                doc.request_render(below, ScaleType::Thumb);
+                n += 1;
+            }
+        }
+    }
+
     #[allow(dead_code)]
     fn print_memory_diag(&self) {
         if let Some(doc) = &self.document {
@@ -324,6 +354,7 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
+        self.render_sidebar_thumbnails();
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
