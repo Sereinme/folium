@@ -233,20 +233,24 @@ impl PdfReader {
     }
 
     /// Submit thumbnail renders for pages visible in the sidebar viewport.
+    /// Rate-limited to at most MAX_PER_CALL submissions per invocation to
+    /// prevent inflight explosion during rapid scrolling.
     pub fn render_sidebar_thumbnails(&mut self, sidebar_height: f32) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return; }
-        // Thumbnail item height varies by page aspect ratio (120–280 px).
-        // Use a generous range to cover the estimate error.
+        const MAX_PER_CALL: usize = 8;
         let item_h = styles::THUMB_MAX_HEIGHT + 48.0;
         let center = (self.sidebar_scroll / item_h).floor() as usize;
         let visible = (sidebar_height / item_h).ceil() as usize + 1;
-        let buffer = visible + 30; // wide buffer for height variance
+        let buffer = visible + 10;
         let start = center.saturating_sub(buffer);
         let end = (center + buffer).min(doc.page_count.saturating_sub(1));
+        let mut count = 0;
         for i in start..=end {
+            if count >= MAX_PER_CALL { break; }
             if !doc.is_cached(i, ScaleType::Thumb) {
                 doc.request_render(i, ScaleType::Thumb);
+                count += 1;
             }
         }
     }

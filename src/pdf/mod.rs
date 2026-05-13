@@ -162,8 +162,8 @@ impl PdfDocument {
 
         // Thumbnails: keep if near the main page OR near the sidebar viewport.
         const THUMB_ITEM_H: f32 = 218.0;
-        const MAIN_THUMB_RADIUS: isize = 50;
-        const SIDEBAR_THUMB_RADIUS: isize = 60;
+        const MAIN_THUMB_RADIUS: isize = 30;
+        const SIDEBAR_THUMB_RADIUS: isize = 25;
         let sidebar_page = (sidebar_scroll / THUMB_ITEM_H) as isize;
         for (i, slot) in self.thumbnails.iter_mut().enumerate() {
             let i_i = i as isize;
