@@ -128,6 +128,7 @@ impl PdfReader {
                 let a = if nw > 0.0 { nh / nw } else { 1.414 };
                 self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
             }
+            self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.submit_renders();
             cx.notify();
         }
@@ -143,6 +144,7 @@ impl PdfReader {
                     let a = if nw > 0.0 { nh / nw } else { 1.414 };
                     self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
                 }
+                self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.submit_renders();
                 cx.notify();
             }
@@ -159,14 +161,15 @@ impl PdfReader {
         let new_page = (self.scroll_offset / step).round() as usize;
         if new_page < doc.page_count && new_page != self.current_page {
             if self.scroll_offset_dirty {
-                // User scrolled: update current_page to match scroll position
+                // Main page scroll: update current_page + sidebar follows
                 self.current_page = new_page;
                 doc.evict_distant(new_page, self.sidebar_scroll);
                 self.scroll_offset_dirty = false;
+                self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             } else {
-                // select_page set scroll_offset with stale/fallback dimensions
-                // that have since been updated by a page render. Keep
-                // current_page, recalculate scroll_offset.
+                // Thumbnail click / outline jump: dimensions changed after
+                // render. Keep current_page, recalculate scroll_offset.
+                // Don't scroll sidebar — it stays where the user left it.
                 self.scroll_offset = self.current_page as f32 * step;
             }
         }
