@@ -83,17 +83,11 @@ pub fn thumbnail_list(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyE
 
         if let Some(cached) = document.cached_page(page_index, ScaleType::Thumb) {
             let ratio = cached.height as f32 / cached.width.max(1) as f32;
-            // Stamp with render_stamp so GPUI repaints every frame when cached
-            let id = pdfr.render_stamp.wrapping_mul(1000).wrapping_add(page_index);
             item = item.child(
-                div()
-                    .id(ElementId::named_usize("thumb-img", id))
-                    .child(
-                        img(cached.image.clone())
-                            .w_full()
-                            .h(px(styles::THUMB_MAX_HEIGHT * ratio))
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
+                img(cached.image.clone())
+                    .w_full()
+                    .h(px(styles::THUMB_MAX_HEIGHT * ratio))
+                    .object_fit(gpui::ObjectFit::Contain),
             );
         } else {
             item = item.child(

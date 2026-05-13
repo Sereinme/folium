@@ -115,7 +115,6 @@ impl PdfReader {
             let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
             self.scroll_offset = page_index as f32 * step;
         }
-        self.sidebar_scroll_handle.scroll_to_item(page_index);
         self.submit_renders();
         cx.notify();
     }
@@ -129,7 +128,6 @@ impl PdfReader {
                 let a = if nw > 0.0 { nh / nw } else { 1.414 };
                 self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
             }
-            self.sidebar_scroll_handle.scroll_to_item(self.current_page);
             self.submit_renders();
             cx.notify();
         }
@@ -145,7 +143,6 @@ impl PdfReader {
                     let a = if nw > 0.0 { nh / nw } else { 1.414 };
                     self.scroll_offset = self.current_page as f32 * ((820.0_f32.min(nw.max(595.0)) * a) + 16.0);
                 }
-                self.sidebar_scroll_handle.scroll_to_item(self.current_page);
                 self.submit_renders();
                 cx.notify();
             }
@@ -265,9 +262,6 @@ impl PdfReader {
     pub fn render_sidebar_thumbnails(&mut self) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return };
-        // Wide range covers thumbnail item height variance (120–280 px).
-        // The 218 px estimate can be off by ±36%, so ±200 pages ≈ ±44k px
-        // guarantees coverage regardless of the actual per-page height.
         const RANGE: usize = 200;
         const MAX_PER_CALL: u8 = 12;
         let center = (self.sidebar_scroll / 218.0) as usize;
