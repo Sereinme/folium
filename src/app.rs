@@ -299,14 +299,23 @@ impl PdfReader {
             let full_n = doc.pages.iter().filter(|p| p.is_some()).count();
             let prev_n = doc.previews.len();
             let thumb_n = doc.thumbnails.iter().filter(|t| t.is_some()).count();
+            // Read RSS from the OS (macOS ps)
+            let rss = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
             eprintln!(
-                "[mem] Full={}×{:.1}MB Preview={}×{:.1}MB Thumb={}×{:.1}MB img={:.1}MB | page_count={} inflight={}",
+                "[mem] rss={:.0}MB | img={:.1}MB (Full={}×{:.1} Preview={}×{:.1} Thumb={}×{:.1}) | radius_full={} thumb={} pg={}",
+                rss as f64 / 1024.0,
+                (full_mem + preview_mem + thumb_mem) as f64 / 1_048_576.0,
                 full_n, full_mem as f64 / 1_048_576.0,
                 prev_n, preview_mem as f64 / 1_048_576.0,
                 thumb_n, thumb_mem as f64 / 1_048_576.0,
-                (full_mem + preview_mem + thumb_mem) as f64 / 1_048_576.0,
+                RENDER_FULL_RADIUS, RENDER_THUMB_RADIUS,
                 doc.page_count,
-                doc.inflight,
             );
         }
     }
