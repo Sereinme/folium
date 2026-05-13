@@ -20,10 +20,11 @@ fn raw_context() -> *mut mupdf_sys::fz_context {
     raw
 }
 
-/// Moderate shrink: reduce store to 50% of current size.
-/// Used on the main render thread between batches.
+/// Shrink the shared mupdf store to 20% of its current size.
+/// Called after DL cache is cleared so no DisplayList references
+/// are pinning store objects.
 fn shrink_mupdf_store() {
-    unsafe { mupdf_sys::fz_shrink_store(raw_context(), 50) };
+    unsafe { mupdf_sys::fz_shrink_store(raw_context(), 20) };
 }
 
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
@@ -180,10 +181,10 @@ impl RenderHandle {
 
                     if !batch.is_empty() {
                         Self::process_batch(&doc, &batch, &result_tx);
-                    } else {
-                        // Single-item render — still shrink store
-                        shrink_mupdf_store();
                     }
+                    // Clear DL cache so store shrink can evict pinned objects
+                    dls.0.clear();
+                    shrink_mupdf_store();
                 }
                 Cmd::Shutdown => break,
             }

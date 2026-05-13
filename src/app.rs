@@ -153,7 +153,7 @@ impl PdfReader {
     pub fn sync_current_page(&mut self) {
         let Some(doc) = &mut self.document else { return };
         if !doc.initialized { return; }
-        let (nw, nh) = doc.page_dim(self.current_page.max(1) - 1);
+        let (nw, nh) = doc.page_dim(self.current_page);
         let a = if nw > 0.0 { nh / nw } else { 1.414 };
         let step = (820.0_f32.min(nw.max(595.0)) * a) + 16.0;
         let new_page = (self.scroll_offset / step).round() as usize;

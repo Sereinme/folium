@@ -18,7 +18,7 @@ pub fn reader_body(pdfr: &mut PdfReader, cx: &mut Context<PdfReader>) -> AnyElem
         return no_pdf_view(cx);
     };
 
-    let (nw, nh) = document.page_dim(pdfr.current_page.max(1) - 1);
+    let (nw, nh) = document.page_dim(pdfr.current_page);
     let aspect = if nw > 0.0 { nh / nw } else { DEFAULT_ASPECT };
     let page_w = MAX_PAGE_W.min(nw.max(595.0));
     let page_h = page_w * aspect;
