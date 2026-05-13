@@ -10,25 +10,27 @@ use rayon::prelude::*;
 use crate::pdf::outline::parse_outline;
 use crate::types::{OutlineItem, ScaleType};
 
-/// Call fz_shrink_store on the thread-local mupdf context to release
-/// cached decoded images, font glyphs, and other resources that mupdf
-/// keeps around for reuse. For large-image PDFs this can free hundreds
-/// of MB of decoded image data that's no longer needed.
-///
-/// SAFETY: mupdf::Context is a newtype around *mut fz_context with
-/// no Drop impl. We extract the raw pointer and pass it to fz_shrink_store.
-fn shrink_mupdf_store() {
+/// Extract the raw mupdf context pointer for the current thread.
+fn raw_context() -> *mut mupdf_sys::fz_context {
     // mupdf::Context is a single-field struct (inner: *mut fz_context).
-    // No Drop — the context is owned by the thread-local storage, not by
-    // the Context wrapper.
+    // No Drop — the context is owned by thread-local storage.
     let ctx = mupdf::Context::get();
-    let raw: *mut mupdf_sys::fz_context = unsafe { std::mem::transmute_copy(&ctx) };
+    let raw = unsafe { std::mem::transmute_copy(&ctx) };
     std::mem::forget(ctx);
+    raw
+}
 
-    // Shrink to 50% of current size — evict the least-recently-used half.
-    unsafe {
-        mupdf_sys::fz_shrink_store(raw, 50);
-    }
+/// Moderate shrink: reduce store to 50% of current size.
+/// Used on the main render thread between batches.
+fn shrink_mupdf_store() {
+    unsafe { mupdf_sys::fz_shrink_store(raw_context(), 50) };
+}
+
+/// Aggressive shrink: evict everything from the shared store.
+/// Called after a parallel batch completes and all DisplayLists
+/// have been dropped, so no store entries are pinned by DL references.
+fn empty_mupdf_store() {
+    unsafe { mupdf_sys::fz_empty_store(raw_context()) };
 }
 
 // ── LRU DisplayList cache (used for serial, single-item renders) ──────
@@ -211,30 +213,38 @@ impl RenderHandle {
     ) {
         if batch.len() >= PARALLEL_BATCH_MIN {
             // ── Parallel path ──────────────────────────────────────
-            // Deduplicate: multiple scales for the same page share one DL.
-            let mut dl_map: HashMap<usize, DisplayList> = HashMap::new();
-            for (_, page_index, _) in batch {
-                if !dl_map.contains_key(page_index) {
-                    let dl = Self::load_display_list(doc, *page_index);
-                    dl_map.insert(*page_index, dl);
+            // Collect results in a scoped block so dl_map is dropped
+            // before we empty the mupdf store. DisplayLists hold
+            // references into the store; if they're alive during
+            // fz_empty_store, their pinned objects can't be evicted.
+            let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32, f32, f32)>)> = {
+                let mut dl_map: HashMap<usize, DisplayList> = HashMap::new();
+                for (_, page_index, _) in batch {
+                    if !dl_map.contains_key(page_index) {
+                        let dl = Self::load_display_list(doc, *page_index);
+                        dl_map.insert(*page_index, dl);
+                    }
                 }
-            }
 
-            // Build a per-entry reference list matching batch order
-            let dl_refs: Vec<&DisplayList> = batch
-                .iter()
-                .map(|(_, page_index, _)| dl_map.get(page_index).unwrap())
-                .collect();
+                let dl_refs: Vec<&DisplayList> = batch
+                    .iter()
+                    .map(|(_, page_index, _)| dl_map.get(page_index).unwrap())
+                    .collect();
 
-            let results: Vec<(u64, usize, ScaleType, Result<(Vec<u8>, u32, u32, f32, f32)>)> =
-                batch
+                let results = batch
                     .par_iter()
                     .zip(dl_refs.par_iter())
                     .map(|((_id, page_index, scale), dl)| {
                         let result = Self::render_from_dl(dl, *scale);
+                        shrink_mupdf_store();
                         (*_id, *page_index, *scale, result)
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
+
+                // dl_map and dl_refs dropped here — DisplayLists released,
+                // their store references unpinned.
+                results
+            };
 
             for (_id, page_index, scale, result) in results {
                 let _ = result_tx.send(ToMain::Done {
@@ -245,8 +255,10 @@ impl RenderHandle {
                 });
             }
 
-            // Free decoded images/fonts accumulated during this batch
-            shrink_mupdf_store();
+            // Now that all DLs are dropped, the shared store can be
+            // fully evacuated. This frees resources accumulated by
+            // ALL rayon threads, not just the current one.
+            empty_mupdf_store();
         } else {
             // ── Serial path (1–2 items) ───────────────────────────
             for (_id, page_index, scale) in batch {
