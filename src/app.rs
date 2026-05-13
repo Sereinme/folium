@@ -350,16 +350,22 @@ impl Render for PdfReader {
         self.render_stamp = self.render_stamp.wrapping_add(1);
         self.sync_current_page();
         let was_inited = self.document.as_ref().is_some_and(|d| d.initialized);
+
+        // Track whether sidebar thumbnail rendering produced new submissions.
+        // If they complete within this same frame (inflight→0), we still
+        // need a follow-up render to paint the newly cached thumbnails.
+        let inflight_before = self.document.as_ref().map_or(0, |d| d.inflight);
         self.render_sidebar_thumbnails();
+        let sidebar_submitted = self.document.as_ref().map_or(0, |d| d.inflight) > inflight_before;
+
         self.poll_results();
         let now_inited = self.document.as_ref().is_some_and(|d| d.initialized);
 
-        // Initial load: Init just arrived, kick off first render batch
         if !was_inited && now_inited {
             self.submit_renders();
         }
 
-        if self.has_pending_work() {
+        if self.has_pending_work() || sidebar_submitted {
             self.schedule_poll(window, cx);
         }
 
